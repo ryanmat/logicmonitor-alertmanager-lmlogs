@@ -1,0 +1,33 @@
+# Description: AlertmanagerConfig CRD that routes Prometheus alerts to LogicMonitor via webhook.
+# Description: Deploys per-namespace to forward matching alerts (critical/warning) to LM Logs.
+apiVersion: monitoring.coreos.com/v1beta1
+kind: AlertmanagerConfig
+metadata:
+  name: logicmonitor-webhook
+  labels:
+    openshift.io/user-monitoring: "true"
+spec:
+  route:
+    receiver: logicmonitor-webhook
+    matchers:
+      - name: severity
+        matchType: "=~"
+        value: "critical|warning"
+    continue: true
+    groupBy:
+      - alertname
+      - namespace
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+  receivers:
+    - name: logicmonitor-webhook
+      webhookConfigs:
+        - url: "https://PORTAL_NAME.logicmonitor.com/rest/api/v1/webhook/ingest/openshift_alertmanager"
+          sendResolved: true
+          httpConfig:
+            authorization:
+              type: Bearer
+              credentials:
+                name: logicmonitor-bearer-token
+                key: token

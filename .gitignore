@@ -1,0 +1,24 @@
+# Environment and secrets
+.env
+*.env
+secrets/
+
+# Claude Code
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Plan files
+plans/
+
+# Internal planning docs (exclude drafts, keep deliverables)
+docs/drafts/

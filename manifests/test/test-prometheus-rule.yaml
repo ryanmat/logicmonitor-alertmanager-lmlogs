@@ -1,0 +1,22 @@
+# Description: PrometheusRule that fires a test alert for verifying the AlertManager-to-LM pipeline.
+# Description: The alert fires immediately (expr: vector(1)) and resolves when deleted.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: logicmonitor-webhook-test
+  labels:
+    openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus
+spec:
+  groups:
+    - name: logicmonitor.webhook.test
+      rules:
+        - alert: LogicMonitorWebhookTest
+          expr: vector(1)
+          for: 1m
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+          annotations:
+            summary: "Test alert for LogicMonitor webhook integration"
+            description: "This alert verifies that AlertManager is forwarding alerts to LogicMonitor via webhook. Delete this PrometheusRule to resolve."

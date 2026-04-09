@@ -1,0 +1,8 @@
+# Description: Kustomize base for AlertManager-to-LogicMonitor webhook integration.
+# Description: Overlays patch portal URL, bearer token, and namespace per cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - alertmanager-config.yaml
+  - bearer-token-secret.yaml

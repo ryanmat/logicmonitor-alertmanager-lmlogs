@@ -1,0 +1,28 @@
+# Description: Example Kustomize overlay for a cluster. Copy this directory per cluster.
+# Description: Replace PORTAL_NAME, REPLACE_WITH_BEARER_TOKEN, and namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: default
+
+resources:
+  - ../../base
+
+patches:
+  # Patch the webhook URL with your LM portal name
+  - target:
+      kind: AlertmanagerConfig
+      name: logicmonitor-webhook
+    patch: |-
+      - op: replace
+        path: /spec/receivers/0/webhookConfigs/0/url
+        value: "https://PORTAL_NAME.logicmonitor.com/rest/api/v1/webhook/ingest/openshift_alertmanager"
+
+  # Patch the bearer token
+  - target:
+      kind: Secret
+      name: logicmonitor-bearer-token
+    patch: |-
+      - op: replace
+        path: /stringData/token
+        value: "REPLACE_WITH_BEARER_TOKEN"
