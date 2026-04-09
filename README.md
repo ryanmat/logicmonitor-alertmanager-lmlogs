@@ -155,7 +155,16 @@ oc delete -f manifests/test/test-prometheus-rule.yaml -n <namespace>
 
 ### LogSource
 
-A webhook LogSource named `OpenShift_AlertManager_Webhook` must exist on your portal. It extracts these fields from the AlertManager JSON payload:
+Import the LogSource definition from `logsource/OpenShift_AlertManager_Webhook.json` via the LM REST API:
+
+```bash
+curl -X POST "https://<portal>.logicmonitor.com/santaba/rest/setting/logsources" \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Content-Type: application/json" \
+  -d @logsource/OpenShift_AlertManager_Webhook.json
+```
+
+Or create it manually in the portal (Settings > LM Logs > Log Sources > Add). The LogSource extracts these fields from the AlertManager JSON payload:
 
 | Field | Extraction Method | Value |
 |---|---|---|

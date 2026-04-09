@@ -1,0 +1,78 @@
+{
+  "name": "OpenShift_AlertManager_Webhook",
+  "description": "Receives Prometheus AlertManager alerts via webhook and extracts structured fields for LM Logs.",
+  "group": "OpenShift",
+  "tags": ["alertmanager", "openshift", "webhook"],
+  "collectionMethod": "WEBHOOK",
+  "filters": [
+    {
+      "attribute": "SourceName",
+      "operator": "Equal",
+      "value": "openshift_alertmanager",
+      "include": "y"
+    }
+  ],
+  "logFields": [
+    {
+      "key": "status",
+      "method": "WebhookAttribute",
+      "value": "status",
+      "comment": "Alert status (firing/resolved)"
+    },
+    {
+      "key": "alertname",
+      "method": "Regex",
+      "value": "\"alertname\":\"([^\"]+)\"",
+      "comment": "Extract alert name"
+    },
+    {
+      "key": "namespace",
+      "method": "Regex",
+      "value": "\"namespace\":\"([^\"]+)\"",
+      "comment": "Extract K8s namespace"
+    },
+    {
+      "key": "severity",
+      "method": "Regex",
+      "value": "\"severity\":\"([^\"]+)\"",
+      "comment": "Extract severity level"
+    },
+    {
+      "key": "cluster_name",
+      "method": "Regex",
+      "value": "\"cluster_name\":\"([^\"]+)\"",
+      "comment": "Extract cluster name from alert labels"
+    },
+    {
+      "key": "receiver",
+      "method": "WebhookAttribute",
+      "value": "receiver",
+      "comment": "AlertManager receiver name"
+    },
+    {
+      "key": "instance",
+      "method": "Regex",
+      "value": "\"instance\":\"([^\"]+)\"",
+      "comment": "Extract instance"
+    },
+    {
+      "key": "source_type",
+      "method": "Static",
+      "value": "prometheus_alertmanager",
+      "comment": "Identify source type"
+    }
+  ],
+  "resourceMapping": [
+    {
+      "index": "0",
+      "key": "openshift.cluster.name",
+      "method": "RegexGroup",
+      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Map to cluster resource by cluster_name label"
+    }
+  ],
+  "collectionAttribute": {
+    "resourceMappingOp": "OR",
+    "filterOp": "AND"
+  }
+}
