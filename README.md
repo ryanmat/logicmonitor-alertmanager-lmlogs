@@ -24,7 +24,7 @@ Kubernetes manifests and documentation for forwarding Prometheus AlertManager al
 2. AlertManager receives alerts and routes based on labels (namespace, severity)
 3. AlertManager POSTs JSON payload to LogicMonitor webhook endpoint
 4. LogicMonitor LogSource parses payload and extracts structured fields
-5. Resource mapping correlates logs to monitored Kubernetes cluster resources
+5. Resource mapping stores cluster and alert attributes on log entries
 6. LogAlerts evaluate log patterns and generate LogicMonitor alerts
 
 ## Prerequisites
@@ -145,7 +145,7 @@ oc apply -f manifests/test/test-prometheus-rule.yaml -n <namespace>
 The test alert fires after 1 minute. Verify in LM Logs:
 
 ```
-source_type="prometheus_alertmanager" AND alertname="LogicMonitorWebhookTest"
+_lm.logsource_name = "OpenShift_AlertManager_Webhook"
 ```
 
 Delete the test rule when done:
@@ -188,13 +188,13 @@ Or create it manually in the portal (Settings > LM Logs > Log Sources > Add). Th
 
 ### Resource Mapping
 
-The LogSource uses Dynamic Group Regex to map incoming logs to cluster resources:
+The LogSource uses RegexGroup to extract attributes stored on each log entry in `_resource.attributes`. These are metadata fields for querying and identification, not device associations (webhook-based logs do not populate the Resource or Resource Type columns in LM Logs -- that is a platform limitation for webhook ingestion).
 
-| Key | Regex |
-|---|---|
-| `openshift.cluster.name` | `"cluster_name"\s*:\s*"([^"]+)"` |
-
-Each monitored cluster resource must have a custom property `openshift.cluster.name` set to the cluster name used in PrometheusRule labels.
+| Key | Regex | Purpose |
+|---|---|---|
+| `openshift.instance.name` | `"instance_name"\s*:\s*"([^"]+)"` | Cluster or node instance name |
+| `openshift.alert.name` | `"alertname"\s*:\s*"([^"]+)"` | Alert name for filtering |
+| `openshift.cluster.name` | `"cluster_name"\s*:\s*"([^"]+)"` | Cluster name for identification |
 
 ### Cluster Name for Resource Mapping
 
@@ -262,23 +262,20 @@ spec:
 ## LMQL Query Reference
 
 ```
-# All AlertManager logs
-source_type="prometheus_alertmanager"
+# All AlertManager webhook logs
+_lm.logsource_name = "OpenShift_AlertManager_Webhook"
 
 # Firing alerts only
-source_type="prometheus_alertmanager" AND status="firing"
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND a_severity = "critical"
 
-# Critical severity
-source_type="prometheus_alertmanager" AND severity="critical"
+# Specific alert name
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND a_alertname = "HighErrorRate"
 
-# Specific cluster
-source_type="prometheus_alertmanager" AND cluster_name="my-cluster"
+# Specific cluster (requires cluster_name label in alerts)
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND a_nodename = "my-cluster"
 
-# Count by severity
-source_type="prometheus_alertmanager" | count by severity
-
-# Top 10 alerts
-source_type="prometheus_alertmanager" | count by alertname | sort by _count desc | limit 10
+# Search within alert descriptions
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND "backup failed"
 ```
 
 ## Adding New Namespaces
