@@ -12,7 +12,7 @@ Prometheus --> AlertManager --> LM Webhook LogSource --> LM Logs --> LogAlerts
 2. AlertManager receives alerts and routes them based on labels (namespace, severity).
 3. AlertManager POSTs a JSON payload to the LogicMonitor webhook endpoint.
 4. The LogicMonitor LogSource parses the payload and extracts structured fields.
-5. Resource mapping correlates logs to monitored Kubernetes cluster resources.
+5. Resource mapping stores cluster and alert attributes on log entries.
 6. LogAlerts evaluate log patterns and generate LogicMonitor alerts.
 
 ## Prerequisites
@@ -24,7 +24,7 @@ Prometheus --> AlertManager --> LM Webhook LogSource --> LM Logs --> LogAlerts
 | Permissions | cluster-admin or monitoring-edit role |
 | Network Egress | HTTPS (443) to your LogicMonitor portal |
 | LM Logs | Enabled on your LogicMonitor portal |
-| LM API User | Bearer token with log ingestion permissions |
+| LM API User | Bearer token with `lm_logs_administrator` role |
 
 ## 1. Enable User Workload Monitoring
 
@@ -43,7 +43,7 @@ data:
     enableUserWorkload: true
 ```
 
-### Step 1b: Enable AlertManager and AlertmanagerConfig
+### Step 1b: Enable AlertManager, AlertmanagerConfig, and External Labels
 
 ```yaml
 apiVersion: v1
@@ -56,9 +56,14 @@ data:
     alertmanager:
       enabled: true
       enableAlertmanagerConfig: true
+    prometheus:
+      externalLabels:
+        cluster_name: <your-cluster-name>
 ```
 
 Both `enabled: true` and `enableAlertmanagerConfig: true` are required. The first creates the AlertManager pods. The second tells the operator to reconcile AlertmanagerConfig CRDs from labeled namespaces. Without `enableAlertmanagerConfig`, AlertmanagerConfig resources are ignored.
+
+The `cluster_name` external label is injected into all alerts automatically. This is the recommended way to provide the cluster name for LogicMonitor resource identification, rather than adding it to every PrometheusRule individually.
 
 ### Verify
 
@@ -77,48 +82,57 @@ Both should show Active/Running status.
 1. In LogicMonitor, navigate to Settings > Users and Roles.
 2. Click Add > Add User.
 3. Set username (e.g., `openshift_alertmanager_webhook`).
-4. Assign a role with LM Logs ingestion permissions (DataIngestion permission required).
+4. Assign the `lm_logs_administrator` role. The `manager` role alone returns HTTP 202 but silently drops logs.
 5. Generate a Bearer Token under User Settings > LMv1 API Tokens > Add.
 6. Copy the token (starts with `lmb_`). Store it securely.
 
 ## 3. Create the LogSource
 
-1. Navigate to Settings > LM Logs > Log Sources.
-2. Click Add Log Source.
-3. Configure:
-   - Name: `OpenShift_AlertManager_Webhook`
-   - Group: `OpenShift`
-   - Type: Webhook
-   - Authentication: Bearer Token
+Import the LogSource definition from `logsource/OpenShift_AlertManager_Webhook.json` in the repository. This is the recommended approach to avoid manual configuration errors.
 
-### Source Filter
+```bash
+curl -X POST "https://<portal>.logicmonitor.com/santaba/rest/setting/logsources" \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Content-Type: application/json" \
+  -d @logsource/OpenShift_AlertManager_Webhook.json
+```
 
-| Attribute | Operator | Value |
-|---|---|---|
-| SourceName | Equal | `openshift_alertmanager` |
+Alternatively, create it manually in the portal (Settings > LM Logs > Log Sources > Add):
+
+- Name: `OpenShift_AlertManager_Webhook`
+- Type: Webhook
+- Filters: None (do not add a SourceName filter)
 
 ### Field Extraction
 
-Add the following log fields:
+The LogSource uses two extraction methods for reliability. WebhookAttribute uses JSONPath to access structured fields. RegexGroup uses regex on the raw payload body as a fallback.
 
 | Field Name | Method | Value | Description |
 |---|---|---|---|
-| status | WebhookAttribute | status | Alert state (firing/resolved) |
-| alertname | Regex | `"alertname":"([^"]+)"` | Name of the alert |
-| namespace | Regex | `"namespace":"([^"]+)"` | Kubernetes namespace |
-| severity | Regex | `"severity":"([^"]+)"` | Alert severity level |
-| cluster_name | Regex | `"cluster_name":"([^"]+)"` | Cluster identifier |
-| receiver | WebhookAttribute | receiver | AlertManager receiver name |
-| instance | Regex | `"instance":"([^"]+)"` | Alert instance |
-| source_type | Static | prometheus_alertmanager | Source identifier |
+| status | WebhookAttribute | `$.status` | Alert state (firing/resolved) |
+| receiver | WebhookAttribute | `$.receiver` | AlertManager receiver name |
+| alertname | WebhookAttribute | `$.alerts[*].labels.alertname` | Name of the alert |
+| namespace | WebhookAttribute | `$.alerts[*].labels.namespace` | Kubernetes namespace |
+| severity | WebhookAttribute | `$.alerts[*].labels.severity` | Alert severity level |
+| summary | WebhookAttribute | `$.alerts[*].annotations.summary` | Alert summary |
+| nodename | WebhookAttribute | `$.alerts[*].labels.instance_name` | Node or instance name |
+| a_alertname | RegexGroup | `"alertname"\s*:\s*"([^"]+)"` | Alert name (regex fallback) |
+| a_severity | RegexGroup | `"severity"\s*:\s*"([^"]+)"` | Severity (regex fallback) |
+| a_summary | RegexGroup | `"summary"\s*:\s*"([^"]+)"` | Summary (regex fallback) |
+| a_description | RegexGroup | `"description"\s*:\s*"((?:[^"\\]|\\.)*)"` | Description (regex fallback) |
+| a_pod | RegexGroup | `"pod"\s*:\s*"([^"]+)"` | Pod name |
+| a_nodename | RegexGroup | `"instance_name"\s*:\s*"([^"]+)"` | Instance name (regex fallback) |
+| a_genURL | RegexGroup | `"generatorURL"\s*:\s*"((?:[^"\\]|\\.)*)"` | Prometheus graph URL |
 
 ### Resource Mapping
 
-| Method | Key | Value |
-|---|---|---|
-| Dynamic Group Regex | `openshift.cluster.name` | `"cluster_name"\s*:\s*"([^"]+)"` |
+Resource mapping extracts attributes stored on each log entry in `_resource.attributes`. These are metadata fields for querying and identification. Webhook-based logs do not populate the Resource or Resource Type columns in LM Logs (this is a platform limitation for webhook ingestion).
 
-This regex extracts the cluster name from the JSON payload and matches it against resources where the property `openshift.cluster.name` equals the extracted value.
+| Method | Key | Value | Purpose |
+|---|---|---|---|
+| RegexGroup | `openshift.instance.name` | `"instance_name"\s*:\s*"([^"]+)"` | Instance name attribute |
+| RegexGroup | `openshift.alert.name` | `"alertname"\s*:\s*"([^"]+)"` | Alert name attribute |
+| RegexGroup | `openshift.cluster.name` | `"cluster_name"\s*:\s*"([^"]+)"` | Cluster name attribute |
 
 ## 4. Add Cluster Property
 
@@ -214,15 +228,17 @@ oc apply -f alertmanager-config.yaml -n <namespace>
 
 ## 8. PrometheusRule Requirements
 
-Alert rules MUST include explicit labels for routing and resource mapping:
+Alert rules MUST include explicit labels for routing:
 
 | Label | Purpose | Required |
 |---|---|---|
 | namespace | Routes alert to correct AlertmanagerConfig | Yes |
-| cluster_name | Enables resource mapping in LogicMonitor | Yes |
 | severity | Matches AlertmanagerConfig route matchers | Yes |
+| cluster_name | Identifies cluster in LM Logs | Provided by external labels (Step 1b) |
 
 When using `leaf-prometheus` scope, the namespace label is not automatically injected. Alerts without the namespace label will not match any route.
+
+If you configured `cluster_name` as an external label in Step 1b, you do not need to add it to individual PrometheusRules. It is injected into all alerts automatically.
 
 Example PrometheusRule:
 
@@ -244,7 +260,6 @@ spec:
           labels:
             severity: warning
             namespace: my-namespace
-            cluster_name: my-cluster
           annotations:
             summary: "High error rate detected"
 ```
@@ -295,38 +310,26 @@ oc get secret alertmanager-user-workload-generated \
 Query:
 
 ```
-source_type="prometheus_alertmanager" AND alertname="TestAlert"
+_lm.logsource_name = "OpenShift_AlertManager_Webhook"
 ```
 
 ## 10. LMQL Query Reference
 
 ```
-# All AlertManager logs
-source_type="prometheus_alertmanager"
+# All AlertManager webhook logs
+_lm.logsource_name = "OpenShift_AlertManager_Webhook"
 
-# Firing alerts only
-source_type="prometheus_alertmanager" AND status="firing"
+# Critical severity alerts
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND a_severity = "critical"
 
-# Resolved alerts
-source_type="prometheus_alertmanager" AND status="resolved"
-
-# Critical severity
-source_type="prometheus_alertmanager" AND severity="critical"
-
-# Specific namespace
-source_type="prometheus_alertmanager" AND namespace="production"
+# Specific alert name
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND a_alertname = "HighErrorRate"
 
 # Specific cluster
-source_type="prometheus_alertmanager" AND cluster_name="my-cluster"
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND a_nodename = "my-cluster"
 
-# Count by severity
-source_type="prometheus_alertmanager" | count by severity
-
-# Count by namespace
-source_type="prometheus_alertmanager" | count by namespace
-
-# Top 10 alerts
-source_type="prometheus_alertmanager" | count by alertname | sort by _count desc | limit 10
+# Search within alert descriptions
+_lm.logsource_name = "OpenShift_AlertManager_Webhook" AND "backup failed"
 ```
 
 ## 11. Adding New Namespaces
@@ -388,6 +391,7 @@ ARO clusters have egress lockdown enabled by default. Whitelist `*.logicmonitor.
 |---|---|
 | AlertmanagerConfig not applied | Verify namespace and AlertmanagerConfig both have `openshift.io/user-monitoring: "true"` label |
 | Webhook returns 401 | Check Bearer token is correct and has LM Logs permissions |
+| Webhook returns 202 but no logs | Verify API user has `lm_logs_administrator` role. Check LogSource uses JSONPath for WebhookAttribute values (e.g., `$.status` not `status`). Do not add SourceName filters. |
 | Alerts not reaching LM | Add explicit `namespace` label to PrometheusRule alert definitions |
-| Logs not mapping to resources | Add `openshift.cluster.name` property to cluster resource and `cluster_name` label to alerts |
+| No Resource/Resource Type on logs | This is a platform limitation for webhook-based ingestion. Logs are queryable by `_lm.logsource_name` and extracted fields. |
 | Egress blocked (managed platforms) | Whitelist `*.logicmonitor.com:443` in egress firewall rules |
