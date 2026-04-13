@@ -55,7 +55,7 @@ data:
     enableUserWorkload: true
 ```
 
-**Step 2: Enable AlertManager and AlertmanagerConfig reconciliation** (in `openshift-user-workload-monitoring`):
+**Step 2: Enable AlertManager, AlertmanagerConfig, and external labels** (in `openshift-user-workload-monitoring`):
 
 ```yaml
 apiVersion: v1
@@ -68,9 +68,12 @@ data:
     alertmanager:
       enabled: true
       enableAlertmanagerConfig: true
+    prometheus:
+      externalLabels:
+        cluster_name: <your-cluster-name>
 ```
 
-Both `enabled` and `enableAlertmanagerConfig` are required. Without `enableAlertmanagerConfig`, the operator ignores AlertmanagerConfig CRDs.
+Both `enabled` and `enableAlertmanagerConfig` are required. Without `enableAlertmanagerConfig`, the operator ignores AlertmanagerConfig CRDs. The `cluster_name` external label is injected into all alerts for resource mapping in LogicMonitor.
 
 Verify AlertManager pods are running:
 
@@ -164,18 +167,24 @@ curl -X POST "https://<portal>.logicmonitor.com/santaba/rest/setting/logsources"
   -d @logsource/OpenShift_AlertManager_Webhook.json
 ```
 
-Or create it manually in the portal (Settings > LM Logs > Log Sources > Add). The LogSource extracts these fields from the AlertManager JSON payload:
+Or create it manually in the portal (Settings > LM Logs > Log Sources > Add). The LogSource uses two extraction methods: WebhookAttribute (JSONPath for structured access) and RegexGroup (regex fallback on the raw payload body). Both are recommended for reliability.
 
-| Field | Extraction Method | Value |
+| Field | Method | Value |
 |---|---|---|
-| status | WebhookAttribute | status |
-| alertname | Regex | `"alertname":"([^"]+)"` |
-| namespace | Regex | `"namespace":"([^"]+)"` |
-| severity | Regex | `"severity":"([^"]+)"` |
-| cluster_name | Regex | `"cluster_name":"([^"]+)"` |
-| receiver | WebhookAttribute | receiver |
-| instance | Regex | `"instance":"([^"]+)"` |
-| source_type | Static | prometheus_alertmanager |
+| status | WebhookAttribute | `$.status` |
+| receiver | WebhookAttribute | `$.receiver` |
+| alertname | WebhookAttribute | `$.alerts[*].labels.alertname` |
+| namespace | WebhookAttribute | `$.alerts[*].labels.namespace` |
+| severity | WebhookAttribute | `$.alerts[*].labels.severity` |
+| summary | WebhookAttribute | `$.alerts[*].annotations.summary` |
+| nodename | WebhookAttribute | `$.alerts[*].labels.instance_name` |
+| a_alertname | RegexGroup | `"alertname"\s*:\s*"([^"]+)"` |
+| a_severity | RegexGroup | `"severity"\s*:\s*"([^"]+)"` |
+| a_summary | RegexGroup | `"summary"\s*:\s*"([^"]+)"` |
+| a_description | RegexGroup | `"description"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"` |
+| a_pod | RegexGroup | `"pod"\s*:\s*"([^"]+)"` |
+| a_nodename | RegexGroup | `"instance_name"\s*:\s*"([^"]+)"` |
+| a_genURL | RegexGroup | `"generatorURL"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"` |
 
 ### Resource Mapping
 
@@ -187,14 +196,40 @@ The LogSource uses Dynamic Group Regex to map incoming logs to cluster resources
 
 Each monitored cluster resource must have a custom property `openshift.cluster.name` set to the cluster name used in PrometheusRule labels.
 
-### PrometheusRule Label Requirements
+### Cluster Name for Resource Mapping
 
-Alert rules MUST include explicit labels for routing and resource mapping:
+The LogSource resource mapping extracts `cluster_name` from alert labels to associate logs with the correct cluster device. There are two ways to provide this:
+
+**Option A: Prometheus external labels (recommended)**
+
+Add `cluster_name` as an external label in `user-workload-monitoring-config`. This automatically injects the label into all alerts without modifying individual PrometheusRules:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+data:
+  config.yaml: |
+    alertmanager:
+      enabled: true
+      enableAlertmanagerConfig: true
+    prometheus:
+      externalLabels:
+        cluster_name: my-cluster
+```
+
+**Option B: Per-rule labels**
+
+Add `cluster_name` directly in PrometheusRule label definitions. Use this when external labels cannot be set.
+
+### PrometheusRule Label Requirements
 
 | Label | Purpose | Required |
 |---|---|---|
 | `namespace` | Routes alert to correct AlertmanagerConfig | Yes |
-| `cluster_name` | Enables resource mapping in LogicMonitor | Yes |
+| `cluster_name` | Enables resource mapping in LogicMonitor | Yes (via external labels or per-rule) |
 | `severity` | Matches AlertmanagerConfig route matchers | Yes |
 
 When using `leaf-prometheus` scope, the namespace label is not automatically injected. Alerts without it will not match any route.
@@ -219,7 +254,7 @@ spec:
           labels:
             severity: warning
             namespace: my-namespace
-            cluster_name: my-cluster
+            cluster_name: my-cluster  # not needed if using external labels
           annotations:
             summary: "High error rate detected"
 ```
@@ -276,7 +311,7 @@ oc get alertmanagerconfig -n <new-namespace>
 | AlertmanagerConfig not applied | Verify namespace and AlertmanagerConfig both have `openshift.io/user-monitoring: "true"` label |
 | Routes not in generated config | Ensure `enableAlertmanagerConfig: true` is set in `user-workload-monitoring-config` ConfigMap |
 | Webhook returns 401 | Check Bearer token is correct, not expired, and has LM Logs permissions |
-| Webhook returns 202 but no logs | Verify API user has `lm_logs_administrator` role, not just `manager` |
+| Webhook returns 202 but no logs | Verify API user has `lm_logs_administrator` role. Check LogSource uses JSONPath for WebhookAttribute values (e.g., `$.status` not `status`). Remove SourceName filters unless verified working. |
 | Alerts not reaching LM | Add explicit `namespace` label to PrometheusRule alert definitions |
 | Logs not mapping to resources | Add `openshift.cluster.name` property to cluster resource, verify `cluster_name` label in alerts |
 | ARO egress blocked | Whitelist `*.logicmonitor.com:443` in ARO egress lockdown firewall rules |

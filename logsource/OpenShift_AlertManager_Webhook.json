@@ -1,74 +1,115 @@
 {
   "name": "OpenShift_AlertManager_Webhook",
-  "description": "Receives Prometheus AlertManager alerts via webhook and extracts structured fields for LM Logs.",
-  "group": "OpenShift",
-  "tags": ["alertmanager", "openshift", "webhook"],
+  "description": "OpenShift AlertManager Webhook",
   "collectionMethod": "WEBHOOK",
-  "filters": [
-    {
-      "attribute": "SourceName",
-      "operator": "Equal",
-      "value": "openshift_alertmanager",
-      "include": "y"
-    }
-  ],
+  "filters": [],
   "logFields": [
     {
-      "key": "status",
-      "method": "WebhookAttribute",
-      "value": "status",
-      "comment": "Alert status (firing/resolved)"
-    },
-    {
-      "key": "alertname",
-      "method": "Regex",
-      "value": "\"alertname\":\"([^\"]+)\"",
-      "comment": "Extract alert name"
+      "key": "a_pod",
+      "method": "RegexGroup",
+      "value": "\"pod\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Pod name"
     },
     {
       "key": "namespace",
-      "method": "Regex",
-      "value": "\"namespace\":\"([^\"]+)\"",
-      "comment": "Extract K8s namespace"
+      "method": "WebhookAttribute",
+      "value": "$.alerts[*].labels.namespace",
+      "comment": "Kubernetes namespace"
+    },
+    {
+      "key": "alertname",
+      "method": "WebhookAttribute",
+      "value": "$.alerts[*].labels.alertname",
+      "comment": "Name of the alert"
+    },
+    {
+      "key": "a_summary",
+      "method": "RegexGroup",
+      "value": "\"summary\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Alert summary"
+    },
+    {
+      "key": "summary",
+      "method": "WebhookAttribute",
+      "value": "$.alerts[*].annotations.summary",
+      "comment": "Alert summary"
+    },
+    {
+      "key": "a_nodename",
+      "method": "RegexGroup",
+      "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Node instance name"
+    },
+    {
+      "key": "a_severity",
+      "method": "RegexGroup",
+      "value": "\"severity\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "severity"
+    },
+    {
+      "key": "nodename",
+      "method": "WebhookAttribute",
+      "value": "$.alerts[*].labels.instance_name",
+      "comment": "NodeName [instance name]"
+    },
+    {
+      "key": "a_alertname",
+      "method": "RegexGroup",
+      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Alert name"
     },
     {
       "key": "severity",
-      "method": "Regex",
-      "value": "\"severity\":\"([^\"]+)\"",
-      "comment": "Extract severity level"
+      "method": "WebhookAttribute",
+      "value": "$.alerts[*].labels.severity",
+      "comment": "Alert severity level"
     },
     {
-      "key": "cluster_name",
-      "method": "Regex",
-      "value": "\"cluster_name\":\"([^\"]+)\"",
-      "comment": "Extract cluster name from alert labels"
+      "key": "a_description",
+      "method": "RegexGroup",
+      "value": "\"description\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": "Alert description"
+    },
+    {
+      "key": "status",
+      "method": "WebhookAttribute",
+      "value": "$.status",
+      "comment": "Alert state (firing/resolved)"
     },
     {
       "key": "receiver",
       "method": "WebhookAttribute",
-      "value": "receiver",
+      "value": "$.receiver",
       "comment": "AlertManager receiver name"
     },
     {
-      "key": "instance",
-      "method": "Regex",
-      "value": "\"instance\":\"([^\"]+)\"",
-      "comment": "Extract instance"
-    },
-    {
-      "key": "source_type",
-      "method": "Static",
-      "value": "prometheus_alertmanager",
-      "comment": "Identify source type"
+      "key": "a_genURL",
+      "method": "RegexGroup",
+      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": "Prometheus generator URL"
     }
   ],
   "resourceMapping": [
     {
       "index": "0",
+      "key": "openshift.instance.name",
+      "method": "RegexGroup",
+      "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Instance name attribute"
+    },
+    {
+      "index": "1",
+      "key": "openshift.alert.name",
+      "method": "RegexGroup",
+      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Alert name attribute"
+    },
+    {
+      "index": "2",
       "key": "openshift.cluster.name",
       "method": "RegexGroup",
       "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Map to cluster resource by cluster_name label"
+      "comment": "Cluster name attribute for identification"
     }
   ],
   "collectionAttribute": {
