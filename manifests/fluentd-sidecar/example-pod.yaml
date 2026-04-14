@@ -42,11 +42,16 @@ spec:
           value: "REPLACE_WITH_CLUSTER_NAME"
         - name: LM_COMPANY_NAME
           value: "REPLACE_WITH_PORTAL_NAME"
-        - name: LM_BEARER_TOKEN
+        - name: LM_ACCESS_ID
           valueFrom:
             secretKeyRef:
-              name: logicmonitor-bearer-token
-              key: token
+              name: logicmonitor-api-credentials
+              key: access_id
+        - name: LM_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: logicmonitor-api-credentials
+              key: access_key
       volumeMounts:
         - name: app-logs
           mountPath: /var/log/app

@@ -34,7 +34,8 @@ data:
     <match app.**>
       @type lm
       company_name "#{ENV['LM_COMPANY_NAME']}"
-      bearer_token "#{ENV['LM_BEARER_TOKEN']}"
+      access_id "#{ENV['LM_ACCESS_ID']}"
+      access_key "#{ENV['LM_ACCESS_KEY']}"
       resource_mapping {"pod_name": "auto.name", "namespace": "auto.namespace", "cluster_name": "auto.clustername"}
       compression gzip
       debug false
