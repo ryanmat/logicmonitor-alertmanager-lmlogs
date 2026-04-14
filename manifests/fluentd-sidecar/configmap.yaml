@@ -1,0 +1,49 @@
+# Description: Fluentd configuration for sidecar-based log forwarding to LogicMonitor LM Logs.
+# Description: Mount this ConfigMap into the Fluentd sidecar container at /fluentd/etc/fluent.conf.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-sidecar-config
+data:
+  fluent.conf: |
+    # Read application logs from shared volume
+    <source>
+      @type tail
+      path /var/log/app/*.log
+      pos_file /var/log/fluentd/app.log.pos
+      tag app.logs
+      read_from_head true
+      <parse>
+        @type none
+      </parse>
+    </source>
+
+    # Enrich with pod and cluster metadata
+    <filter app.**>
+      @type record_transformer
+      <record>
+        hostname "#{ENV['NODE_NAME']}"
+        pod_name "#{ENV['POD_NAME']}"
+        namespace "#{ENV['POD_NAMESPACE']}"
+        cluster_name "#{ENV['CLUSTER_NAME']}"
+        message ${record["message"]}
+      </record>
+    </filter>
+
+    # Forward to LogicMonitor LM Logs
+    <match app.**>
+      @type lm
+      company_name "#{ENV['LM_COMPANY_NAME']}"
+      bearer_token "#{ENV['LM_BEARER_TOKEN']}"
+      resource_mapping {"pod_name": "auto.name", "namespace": "auto.namespace", "cluster_name": "auto.clustername"}
+      compression gzip
+      debug false
+
+      <buffer>
+        @type memory
+        flush_interval 1s
+        chunk_limit_size 5m
+        flush_thread_count 4
+        total_limit_size 256m
+      </buffer>
+    </match>

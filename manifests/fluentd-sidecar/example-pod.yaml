@@ -1,0 +1,67 @@
+# Description: Example pod spec with a Fluentd sidecar for forwarding logs to LogicMonitor.
+# Description: Replace image, volume paths, and env values for your application.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-with-fluentd
+  labels:
+    app: my-app
+spec:
+  containers:
+    # Application container -- writes logs to /var/log/app/
+    - name: app
+      image: my-app:latest
+      volumeMounts:
+        - name: app-logs
+          mountPath: /var/log/app
+
+    # Fluentd sidecar -- reads logs from shared volume, forwards to LM Logs
+    - name: fluentd
+      image: logicmonitor/lm-logs-k8s-fluentd:1.4.0
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CLUSTER_NAME
+          value: "REPLACE_WITH_CLUSTER_NAME"
+        - name: LM_COMPANY_NAME
+          value: "REPLACE_WITH_PORTAL_NAME"
+        - name: LM_BEARER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: logicmonitor-bearer-token
+              key: token
+      volumeMounts:
+        - name: app-logs
+          mountPath: /var/log/app
+          readOnly: true
+        - name: fluentd-config
+          mountPath: /fluentd/etc/fluent.conf
+          subPath: fluent.conf
+        - name: fluentd-pos
+          mountPath: /var/log/fluentd
+
+  volumes:
+    - name: app-logs
+      emptyDir: {}
+    - name: fluentd-config
+      configMap:
+        name: fluentd-sidecar-config
+    - name: fluentd-pos
+      emptyDir: {}
