@@ -1,0 +1,127 @@
+# Description: PrometheusRule generating continuous diverse AlertManager traffic for LogSource debugging.
+# Description: Multiple always-firing alerts with varying shapes (pod, deployment, node, with/without cluster_name).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: logicmonitor-webhook-firehose
+  labels:
+    openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus
+spec:
+  groups:
+    - name: logicmonitor.firehose.minimal
+      interval: 30s
+      rules:
+        - alert: FirehoseMinimal
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+          annotations:
+            summary: "Minimal alert shape - labels only"
+            description: "Tests basic extraction with no optional fields."
+
+    - name: logicmonitor.firehose.with-cluster
+      interval: 30s
+      rules:
+        - alert: FirehoseWithClusterName
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+          annotations:
+            summary: "Alert with explicit cluster_name label"
+            description: "Tests resource mapping via cluster_name."
+
+    - name: logicmonitor.firehose.pod-level
+      interval: 30s
+      rules:
+        - alert: FirehosePodLevel
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: critical
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+            pod: "example-pod-abc123-xyz"
+            container: "app"
+          annotations:
+            summary: "Pod-specific alert shape"
+            description: "Tests pod label extraction."
+            runbook_url: "https://example.com/runbook/pod"
+
+    - name: logicmonitor.firehose.deployment-level
+      interval: 30s
+      rules:
+        - alert: FirehoseDeploymentLevel
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+            deployment: "example-deployment"
+            openshift_io_alert_source: "platform"
+          annotations:
+            summary: "Deployment-level alert with platform source"
+            description: "Tests openshift_io_alert_source and deployment extraction."
+
+    - name: logicmonitor.firehose.node-level
+      interval: 30s
+      rules:
+        - alert: FirehoseNodeLevel
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: critical
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+            instance: "node-1.example.io"
+          annotations:
+            summary: "Node-level alert with instance label"
+            description: "Tests node/instance label extraction."
+
+    - name: logicmonitor.firehose.with-message
+      interval: 30s
+      rules:
+        - alert: FirehoseWithMessage
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+          annotations:
+            summary: "Alert using message annotation"
+            message: "Some alerts use 'message' instead of 'description' for primary content."
+            description: "Tests message field extraction."
+
+    - name: logicmonitor.firehose.escaped-quotes
+      interval: 30s
+      rules:
+        - alert: FirehoseEscapedQuotes
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+          annotations:
+            summary: 'Alert with "embedded quotes" in description'
+            description: 'The condition is "firing" when value is "above threshold" - tests escape-aware regex.'
+
+    - name: logicmonitor.firehose.no-cluster-name
+      interval: 30s
+      rules:
+        - alert: FirehoseNoClusterName
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            component: "test"
+          annotations:
+            summary: "Alert WITHOUT cluster_name label (simulates customer without externalLabels)"
+            description: "Tests fallback resource identification via externalURL."
