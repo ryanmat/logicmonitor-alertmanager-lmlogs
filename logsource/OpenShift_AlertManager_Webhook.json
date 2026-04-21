@@ -1,119 +1,165 @@
 {
-  "name": "OpenShift_AlertManager_Webhook",
-  "description": "OpenShift AlertManager Webhook",
-  "collectionMethod": "WEBHOOK",
-  "filters": [],
-  "logFields": [
-    {
-      "key": "a_pod",
-      "method": "RegexGroup",
-      "value": "\"pod\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Pod name"
-    },
-    {
-      "key": "namespace",
-      "method": "WebhookAttribute",
-      "value": "$.alerts[*].labels.namespace",
-      "comment": "Kubernetes namespace"
-    },
-    {
-      "key": "alertname",
-      "method": "WebhookAttribute",
-      "value": "$.alerts[*].labels.alertname",
-      "comment": "Name of the alert"
-    },
-    {
-      "key": "a_summary",
-      "method": "RegexGroup",
-      "value": "\"summary\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert summary"
-    },
-    {
-      "key": "summary",
-      "method": "WebhookAttribute",
-      "value": "$.alerts[*].annotations.summary",
-      "comment": "Alert summary"
-    },
-    {
-      "key": "a_nodename",
-      "method": "RegexGroup",
-      "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Node instance name"
-    },
-    {
-      "key": "a_severity",
-      "method": "RegexGroup",
-      "value": "\"severity\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "severity"
-    },
-    {
-      "key": "nodename",
-      "method": "WebhookAttribute",
-      "value": "$.alerts[*].labels.instance_name",
-      "comment": "NodeName [instance name]"
-    },
-    {
-      "key": "a_alertname",
-      "method": "RegexGroup",
-      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert name"
-    },
-    {
-      "key": "severity",
-      "method": "WebhookAttribute",
-      "value": "$.alerts[*].labels.severity",
-      "comment": "Alert severity level"
-    },
-    {
-      "key": "a_description",
-      "method": "RegexGroup",
-      "value": "\"description\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Alert description"
-    },
-    {
-      "key": "status",
-      "method": "WebhookAttribute",
-      "value": "$.status",
-      "comment": "Alert state (firing/resolved)"
-    },
-    {
-      "key": "receiver",
-      "method": "WebhookAttribute",
-      "value": "$.receiver",
-      "comment": "AlertManager receiver name"
-    },
-    {
-      "key": "a_genURL",
-      "method": "RegexGroup",
-      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Prometheus generator URL"
-    }
-  ],
+  "collectionMethod": "webhook",
   "resourceMapping": [
     {
+      "originId": "yBMEkgioTdeuKozY3TYQWg",
+      "method": "RegexGroup",
       "index": "0",
-      "key": "openshift.instance.name",
-      "method": "RegexGroup",
+      "comment": "Instance name attribute",
       "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Instance name attribute"
+      "key": "openshift.instance.name"
     },
     {
+      "originId": "X02xf7zETHCF5Z59s1eRTg",
+      "method": "RegexGroup",
       "index": "1",
-      "key": "openshift.alert.name",
-      "method": "RegexGroup",
+      "comment": "Alert name attribute",
       "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert name attribute"
+      "key": "openshift.alert.name"
     },
     {
-      "index": "2",
-      "key": "openshift.cluster.name",
+      "originId": "1cfpwKwLQsasAW7wJH1wDQ",
       "method": "RegexGroup",
+      "index": "2",
+      "comment": "Map to cluster device when cluster_name label present",
       "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Cluster name attribute for identification"
+      "key": "openshift.cluster.name"
     }
   ],
-  "collectionAttribute": {
+  "searchKeywords": "",
+  "description": "OpenShift AlertManager Webhook",
+  "appliesTo": "",
+  "collectionAttrs": {
     "resourceMappingOp": "OR",
     "filterOp": "AND"
-  }
+  },
+  "filters": [
+    {
+      "op": "Equal",
+      "include": "y",
+      "originId": "3LVf5lvERxutWUgzwFc_Sg",
+      "name": "SourceName",
+      "index": "",
+      "comment": "",
+      "value": "OpenShift_AlertManager_Webhook"
+    }
+  ],
+  "type": 10,
+  "technicalNotes": "",
+  "version": 1776275226,
+  "registryMetadata": {
+    "currentUuid": "Nl9HfqZeQIuZvx5Ldd_uUQ",
+    "originalUuid": "wbnbMHLCTuyvMizledJ5IQ",
+    "locatorId": "",
+    "authorCompanyUuid": "bfbf7ea4-2c0a-4443-bf86-d50904d2a4c9",
+    "registryVersion": "1.0.0",
+    "checksum": "90329dd4142e21bc08c514947cccdbb1",
+    "namespace": "",
+    "registryId": "",
+    "isChangedFromOrigin": false,
+    "status": ""
+  },
+  "logFields": [
+    {
+      "originId": "c3UXiPgVTOyVCtXcxR-5Nw",
+      "method": "RegexGroup",
+      "comment": "",
+      "value": "\"description\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "key": "a_description"
+    },
+    {
+      "originId": "Z7N06nO7Q6e5isTxUdPP1g",
+      "method": "RegexGroup",
+      "comment": "Pod name",
+      "value": "\"pod\"\\s*:\\s*\"([^\"]+)\"",
+      "key": "a_pod"
+    },
+    {
+      "originId": "MTpwWRwrQve0xa2m_7styA",
+      "method": "WebhookAttribute",
+      "comment": "Alert severity level",
+      "value": "$.alerts[*].labels.severity",
+      "key": "severity"
+    },
+    {
+      "originId": "niTP7tvLR1-NNNaZ69LNEw",
+      "method": "RegexGroup",
+      "comment": "",
+      "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
+      "key": "a_nodename"
+    },
+    {
+      "originId": "cbLSOcRbTdeMHt6kPY_mzA",
+      "method": "WebhookAttribute",
+      "comment": "Alert summary",
+      "value": "$.alerts[*].annotations.summary",
+      "key": "summary"
+    },
+    {
+      "originId": "QujDb1qQRIOSm6PcUxj4tw",
+      "method": "RegexGroup",
+      "comment": "",
+      "value": "\"summary\"\\s*:\\s*\"([^\"]+)\"",
+      "key": "a_summary"
+    },
+    {
+      "originId": "SLMhd11UTB-AsCM4Dh3QWg",
+      "method": "RegexGroup",
+      "comment": "severity",
+      "value": "\"severity\"\\s*:\\s*\"([^\"]+)\"",
+      "key": "a_severity"
+    },
+    {
+      "originId": "c_uguiF1SceSAAg8eRoqRA",
+      "method": "RegexGroup",
+      "comment": "",
+      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
+      "key": "a_alertname"
+    },
+    {
+      "originId": "aNLJXRbdT2yUnyc0-Ua7dg",
+      "method": "RegexGroup",
+      "comment": "",
+      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "key": "a_genURL"
+    },
+    {
+      "originId": "sV9hdFQRQ6ivthWEeg7nOg",
+      "method": "WebhookAttribute",
+      "comment": "AlertManager receiver name",
+      "value": "$.receiver",
+      "key": "receiver"
+    },
+    {
+      "originId": "kfS41zDfQ6aK09z35kftOA",
+      "method": "WebhookAttribute",
+      "comment": "Name of the alert",
+      "value": "$.alerts[*].labels.alertname",
+      "key": "alertname"
+    },
+    {
+      "originId": "mmY-2q1uTAOursHM-iItlw",
+      "method": "WebhookAttribute",
+      "comment": "NodeName [instance name]",
+      "value": "$.alerts[*].labels.instance_name",
+      "key": "nodename"
+    },
+    {
+      "originId": "jCo9kfl3RI6Cxm7PHBekFA",
+      "method": "WebhookAttribute",
+      "comment": "Kubernetes namespace",
+      "value": "$.alerts[*].labels.namespace",
+      "key": "namespace"
+    },
+    {
+      "originId": "9s4uwSMXRPSxPfSsYtYP8w",
+      "method": "WebhookAttribute",
+      "comment": "Alert state (firing/resolved)",
+      "value": "$.status",
+      "key": "status"
+    }
+  ],
+  "name": "OpenShift_AlertManager_Webhook",
+  "collectionInterval": 0,
+  "group": ""
 }
