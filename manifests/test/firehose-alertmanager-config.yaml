@@ -1,0 +1,36 @@
+# Description: AlertmanagerConfig with tightened timing for debug firehose (2m repeatInterval vs default 4h).
+# Description: Use this instead of the production base AlertmanagerConfig during LogSource development.
+apiVersion: monitoring.coreos.com/v1beta1
+kind: AlertmanagerConfig
+metadata:
+  name: logicmonitor-webhook-firehose
+  labels:
+    openshift.io/user-monitoring: "true"
+spec:
+  route:
+    receiver: logicmonitor-webhook-firehose
+    matchers:
+      - name: severity
+        matchType: "=~"
+        value: "critical|warning"
+      - name: alertname
+        matchType: "=~"
+        value: "Firehose.*"
+    continue: true
+    groupBy:
+      - alertname
+      - namespace
+    groupWait: 10s
+    groupInterval: 1m
+    repeatInterval: 2m
+  receivers:
+    - name: logicmonitor-webhook-firehose
+      webhookConfigs:
+        - url: "https://PORTAL_NAME.logicmonitor.com/rest/api/v1/webhook/ingest/openshift_alertmanager"
+          sendResolved: true
+          httpConfig:
+            authorization:
+              type: Bearer
+              credentials:
+                name: logicmonitor-bearer-token
+                key: token
