@@ -14,168 +14,173 @@
       "key": "receiver",
       "method": "RegexGroup",
       "value": "\"receiver\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "AlertManager receiver name"
-    },
-    {
-      "key": "status",
-      "method": "RegexGroup",
-      "value": "\"status\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Top-level webhook status (firing/resolved)"
-    },
-    {
-      "key": "alert_status",
-      "method": "RegexGroup",
-      "value": "\"alerts\"\\s*:\\s*\\[\\s*\\{\\s*\"status\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Status of the first alert in the group"
-    },
-    {
-      "key": "alertname",
-      "method": "RegexGroup",
-      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert name (first match in payload)"
-    },
-    {
-      "key": "severity",
-      "method": "RegexGroup",
-      "value": "\"severity\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert severity"
-    },
-    {
-      "key": "namespace",
-      "method": "RegexGroup",
-      "value": "\"namespace\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Kubernetes namespace"
-    },
-    {
-      "key": "cluster_name",
-      "method": "RegexGroup",
-      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Cluster name (from externalLabels or per-rule label)"
-    },
-    {
-      "key": "cluster_id",
-      "method": "RegexGroup",
-      "value": "https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
-      "comment": "Cluster identifier extracted from console URL (works without externalLabels)"
+      "comment": ""
     },
     {
       "key": "component",
       "method": "RegexGroup",
       "value": "\"component\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Component label (when present)"
-    },
-    {
-      "key": "pod",
-      "method": "RegexGroup",
-      "value": "\"pod\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Pod name (for pod-specific alerts)"
-    },
-    {
-      "key": "alert_source",
-      "method": "RegexGroup",
-      "value": "\"openshift_io_alert_source\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert source (platform/user)"
-    },
-    {
-      "key": "prometheus",
-      "method": "RegexGroup",
-      "value": "\"prometheus\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Prometheus instance that fired the alert"
-    },
-    {
-      "key": "summary",
-      "method": "RegexGroup",
-      "value": "\"summary\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Alert summary (escape-aware)"
-    },
-    {
-      "key": "description",
-      "method": "RegexGroup",
-      "value": "\"description\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Alert description (escape-aware)"
-    },
-    {
-      "key": "message",
-      "method": "RegexGroup",
-      "value": "\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Alert message annotation (when used instead of description)"
-    },
-    {
-      "key": "runbook_url",
-      "method": "RegexGroup",
-      "value": "\"runbook_url\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Runbook URL (when provided)"
-    },
-    {
-      "key": "starts_at",
-      "method": "RegexGroup",
-      "value": "\"startsAt\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert start timestamp"
+      "comment": ""
     },
     {
       "key": "ends_at",
       "method": "RegexGroup",
       "value": "\"endsAt\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert end timestamp (0001-01-01 when firing)"
-    },
-    {
-      "key": "generator_url",
-      "method": "RegexGroup",
-      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "Prometheus query URL for the alert"
-    },
-    {
-      "key": "fingerprint",
-      "method": "RegexGroup",
-      "value": "\"fingerprint\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "AlertManager fingerprint (unique alert instance ID)"
+      "comment": ""
     },
     {
       "key": "external_url",
       "method": "RegexGroup",
       "value": "\"externalURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "AlertManager external URL (cluster console)"
+      "comment": ""
     },
     {
       "key": "group_key",
       "method": "RegexGroup",
       "value": "\"groupKey\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": "AlertManager group key (dedupe identifier)"
+      "comment": ""
     },
     {
-      "key": "version",
+      "key": "generator_url",
       "method": "RegexGroup",
-      "value": "\"version\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "AlertManager webhook schema version"
+      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": ""
     },
     {
       "key": "truncated_alerts",
       "method": "RegexGroup",
       "value": "\"truncatedAlerts\"\\s*:\\s*(\\d+)",
-      "comment": "Count of truncated alerts in the batch (numeric)"
+      "comment": ""
+    },
+    {
+      "key": "description",
+      "method": "RegexGroup",
+      "value": "\"description\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": ""
+    },
+    {
+      "key": "message",
+      "method": "RegexGroup",
+      "value": "\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": ""
+    },
+    {
+      "key": "namespace",
+      "method": "RegexGroup",
+      "value": "\"namespace\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "prometheus",
+      "method": "RegexGroup",
+      "value": "\"prometheus\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "alertname",
+      "method": "RegexGroup",
+      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "alert_source",
+      "method": "RegexGroup",
+      "value": "\"openshift_io_alert_source\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "cluster_id",
+      "method": "RegexGroup",
+      "value": "https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
+      "comment": ""
+    },
+    {
+      "key": "status",
+      "method": "RegexGroup",
+      "value": "\"status\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "severity",
+      "method": "RegexGroup",
+      "value": "\"severity\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "cluster_name",
+      "method": "RegexGroup",
+      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "fingerprint",
+      "method": "RegexGroup",
+      "value": "\"fingerprint\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "starts_at",
+      "method": "RegexGroup",
+      "value": "\"startsAt\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "version",
+      "method": "RegexGroup",
+      "value": "\"version\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "pod",
+      "method": "RegexGroup",
+      "value": "\"pod\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "alert_status",
+      "method": "RegexGroup",
+      "value": "\"alerts\"\\s*:\\s*\\[\\s*\\{\\s*\"status\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "runbook_url",
+      "method": "RegexGroup",
+      "value": "\"runbook_url\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": ""
+    },
+    {
+      "key": "summary",
+      "method": "RegexGroup",
+      "value": "\"summary\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": ""
     }
   ],
   "resourceMapping": [
     {
       "index": "0",
-      "key": "openshift.alert.name",
+      "key": "openshift.instance.name",
       "method": "RegexGroup",
-      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Stores alert name in _resource.attributes for searchability"
+      "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Instance name attribute"
     },
     {
       "index": "1",
-      "key": "openshift.cluster.name",
+      "key": "openshift.alert.name",
       "method": "RegexGroup",
-      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Stores cluster name in _resource.attributes (requires externalLabels)"
+      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": "Alert name attribute"
     },
     {
       "index": "2",
-      "key": "openshift.cluster.id",
-      "method": "RegexGroup",
-      "value": "https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
-      "comment": "Stores cluster ID extracted from console URL (works without externalLabels)"
+      "key": "a_genURL",
+      "method": "Regex",
+      "value": "^https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
+      "comment": "Map to cluster device when cluster_name label present"
     }
+  ],
+  "group": "",
+  "tags": [],
+  "accessGroupIds": [
+    1
   ]
 }

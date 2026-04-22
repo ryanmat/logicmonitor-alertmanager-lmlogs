@@ -100,14 +100,19 @@ Import the LogSource definition from `logsource/OpenShift_AlertManager_Webhook.j
 curl -X POST "https://<portal>.logicmonitor.com/santaba/rest/setting/logsources" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
+  -H "X-Version: 3" \
   -d @logsource/OpenShift_AlertManager_Webhook.json
 ```
+
+The `X-Version: 3` header is required — the LM REST endpoint silently rejects the payload under the default older API version with a generic HTTP 400. The same JSON imported through the portal UI (Settings > LogSources > Add > Import from JSON) works without thinking about API version.
 
 Alternatively, create it manually in the portal (Settings > LM Logs > Log Sources > Add):
 
 - Name: `OpenShift_AlertManager_Webhook`
 - Type: Webhook
 - Filters: **None** (do NOT add a SourceName filter)
+
+**Once imported, do not delete-and-recreate the LogSource.** Webhook URL→LogSource dispatch on LM is backed by an opaque server-side cache that breaks under repeated recreate cycles — payloads continue returning HTTP 202 Accepted but logs land in `default.webhook_logsource` instead of this LogSource. Recovery requires importing a fresh copy via the portal UI and waiting at least 10 minutes. If you need to change the LogSource definition, prefer in-place PUT updates over delete+create.
 
 ### Critical Configuration Rules
 
@@ -154,9 +159,11 @@ These mappings populate `_resource.attributes` on each log for metadata searchab
 
 | Method | Key | Value | Purpose |
 |---|---|---|---|
+| RegexGroup | `openshift.instance.name` | `"instance_name"\s*:\s*"([^"]+)"` | Instance name attribute (extracts only when an `instance_name` label is present) |
 | RegexGroup | `openshift.alert.name` | `"alertname"\s*:\s*"([^"]+)"` | Alert name attribute (always populates) |
-| RegexGroup | `openshift.cluster.name` | `"cluster_name"\s*:\s*"([^"]+)"` | Cluster name attribute (populates when externalLabel set) |
-| RegexGroup | `openshift.cluster.id` | `https:\/\/[^\/]*?\.apps\.([^.]+)\.` | Cluster ID from console URL (always populates) |
+| Regex | `a_genURL` | `^https:\/\/[^\/]*?\.apps\.([^.]+)\.` | Cluster ID from console URL — kept for compatibility with the SMBC-derived reference LogSource. The `^` anchor and `Regex` method mean this mapping never extracts a value against an AlertManager payload, but it does not block dispatch. The cluster identifier is reliably available via the `cluster_id` logField (without the anchor). |
+
+WebHook LogSources require at least one resource mapping configured at create time (the LM API rejects an empty `resourceMapping` array on a `WEBHOOK` LogSource). The three mappings above are the proven-working set carried over from the SMBC reference — leave them in place.
 
 ## 4. Prepare the Target Namespace
 

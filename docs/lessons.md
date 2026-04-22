@@ -9,9 +9,10 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 - Tested every permutation of `Regex`, `RegexGroup`, and `WebhookAttribute` methods on resource mappings.
 - Tested with and without custom properties (`openshift.cluster.name`, `a_genURL`, `system.displayname`, `auto.clustername`) set on matching devices.
 - Tested against real AlertManager traffic from an ARO cluster, not synthetic curl alone.
-- Confirmed Sutter Health's production portal exhibits the same behavior — they have not solved it either.
-- **Why:** Platform behavior of LM's webhook ingestion pipeline. Undocumented in LM's public docs.
-- **How to apply:** Do not invest more time trying to make webhook resource mapping populate the Resource column. For per-device log-to-alert correlation in the LM UI, pivot to collector-based ingestion (Fluentd sidecar forwarder to `/rest/log/ingest` with explicit `_lm.resourceId`).
+- Reconfirmed by importing Sutter Health's exact production LogSource into our portal: `_resource.attributes` populates with the extracted attribute keys, but the Resource column itself stays empty even when device properties match the extracted values exactly.
+- The `_resource.attributes` array is metadata extraction output, not a device binding. Resource column binding requires a separate mechanism that webhook ingestion does not provide.
+- **Why:** Platform behavior of LM's webhook ingestion pipeline. Undocumented in LM's public docs. The only path that populates the Resource column is collector-based ingestion via `/rest/log/ingest` with an explicit `_lm.resourceId` in the payload.
+- **How to apply:** Do not invest more time trying to make webhook resource mapping populate the Resource column. For per-device log-to-alert correlation in the LM UI, pivot to collector-based ingestion (Fluentd forwarder to `/rest/log/ingest` with explicit `_lm.resourceId` resolved via the `@type lm` output plugin's `resource_mapping` config).
 
 ### `SourceName` filter with a mismatched value silently routes all logs to `default.webhook_logsource`
 
@@ -25,8 +26,9 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 - On resource mappings specifically, the `Regex` method (UI label "Dynamic Regex") stores the full text that matched the regex pattern, including surrounding context.
 - `RegexGroup` method (UI label "Dynamic Group Regex") stores just the content of the first capture group `(...)`.
 - On logFields, both methods honor capture groups correctly — only resource mappings differ.
-- **Why:** Verified directly: regex `"cluster_name"\s*:\s*"([^"]+)"` under `Regex` method stored `"cluster_name": "rm-aro-cluster"` literal; under `RegexGroup` stored `rm-aro-cluster`.
-- **How to apply:** Always use `RegexGroup` for webhook LogSource extractions — logFields and resource mappings alike. The `Regex` method produces unusable output for device-property lookups.
+- This affects the EXTRACTED VALUE only — it does NOT affect whether the LogSource dispatches a payload. Sutter Health's production LogSource ships with a `Regex` method mapping that has a `^` anchor (so it never matches the payload) and dispatch still works fine. Failed extractions on a resource mapping leave that mapping's slot empty in `_resource.attributes` without breaking the LogSource itself.
+- **Why:** Verified directly: regex `"cluster_name"\s*:\s*"([^"]+)"` under `Regex` method stored `"cluster_name": "rm-aro-cluster"` literal; under `RegexGroup` stored `rm-aro-cluster`. Reconfirmed dispatch independence by importing Sutter's LogSource (which has both anti-patterns) and observing successful dispatch + clean field extraction on our portal.
+- **How to apply:** Use `RegexGroup` for webhook LogSource extractions when you want a usable extracted value — logFields and resource mappings alike. Do not assume that `Regex` method or `^` anchor mistakes you find in an existing LogSource are causing dispatch failures; they only produce empty extracted values.
 
 ### Free-text fields need escape-aware regex
 
@@ -42,8 +44,9 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 - The `^` anchor means "start of the payload string", which always begins with `{"receiver":...` — not `https://`.
 - Regex `^https:\/\/...` never matches a webhook payload.
 - Regex `https:\/\/...` without the anchor matches substrings anywhere in the payload.
-- **Why:** `cluster_id` regex `^https:\/\/[^\/]*?\.apps\.([^.]+)\.` never extracted until the `^` anchor was removed. Then it correctly extracted `qmhkwy1yzd313c0d18` from the `externalURL` field.
-- **How to apply:** Do not use `^` or `$` anchors in webhook LogSource regex patterns unless you have proven they match against the position you intend.
+- Like the Regex/RegexGroup distinction, this affects the EXTRACTED VALUE only — a never-matching regex on a resource mapping does NOT break LogSource dispatch. It just produces an empty slot in `_resource.attributes`.
+- **Why:** `cluster_id` regex `^https:\/\/[^\/]*?\.apps\.([^.]+)\.` never extracted until the `^` anchor was removed. Then it correctly extracted `qmhkwy1yzd313c0d18` from the `externalURL` field. Sutter's production LogSource keeps the `^` anchor on its `a_genURL` resource mapping (so it never extracts) and dispatch still works.
+- **How to apply:** Do not use `^` or `$` anchors in webhook LogSource regex patterns unless you have proven they match against the position you intend. But also do not waste time fixing anchor mistakes in resource mappings unless you actually need the extracted value — the broken extraction is silent and harmless to dispatch.
 
 ### Large LogSource edits have a 2-5 minute propagation lag
 
@@ -87,10 +90,19 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 
 ### Deleting and recreating a webhook LogSource changes its ID
 
-- LogSource IDs incremented 17 → 18 → 19 → 20 during this session as the LogSource was deleted and recreated.
-- All three previous IDs are no longer addressable via the API after deletion.
+- LogSource IDs incremented 17 → 18 → 19 → 20 → 22 → 23 → 24 across sessions as the LogSource was deleted and recreated.
+- All previous IDs are no longer addressable via the API after deletion.
 - **Why:** LM does not reuse LogSource IDs. Deletion is a permanent record change.
 - **How to apply:** Prefer in-place edits over delete+recreate. Track the current LogSource ID in session notes when debugging.
+
+### Webhook URL→LogSource dispatch cache survives stale and breaks under thrash
+
+- LM appears to maintain a server-side cache mapping webhook URL path segments to LogSource IDs. The mapping is opaque — it is NOT a strict name match (Sutter's `OpenShift_AlertManager_Webhook` does not equal URL segment `openshift_alertmanager` and dispatch still works), it is not surfaced in the LogSource definition, and it is not exposed via any documented API.
+- Once the mapping registers, dispatch is stable for an indefinite period.
+- Rapid delete-and-recreate of the LogSource (4+ recreates in a 24-hour window during 2026-04-21/22) caused dispatch to break: payloads received HTTP 202 Accepted but logs landed in `_lm.logsource_name = "default.webhook_logsource"` instead of the new LogSource. The break persisted across multiple recreate cycles even when the new LogSource definition was structurally identical to a known-working one.
+- Recovery required importing a known-working LogSource via the portal UI (Settings → LogSources → Add → Import from JSON) and then leaving it untouched for several minutes. After that, dispatch resumed for the next firehose cycle.
+- **Why:** The dispatch cache invalidation logic on LM's side is not under our control. Each delete+recreate (or possibly each PUT that touches structural fields) appears to push the URL→LogSource binding into a degraded state where the dispatcher falls back to `default.webhook_logsource`. The exact trigger threshold is unknown.
+- **How to apply:** Treat webhook LogSources as nearly-immutable infrastructure. Use the canonical JSON in `logsource/OpenShift_AlertManager_Webhook.json` as the import source, import once, and accept the configuration that lands. Do not delete-and-recreate to "clean up" or experiment — every recreate adds dispatch risk. If the LogSource needs structural changes (new logFields, mapping tweaks), prefer in-place PUT updates over delete+create. If you must recreate, import via the LM Exchange UI rather than the REST API and wait at least 10 minutes before declaring failure.
 
 ### Orphan device properties persist after resource mapping debugging
 
@@ -107,3 +119,25 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 - The `@type lm` output plugin + `resource_mapping` config is the right primitive — `{"cluster_name": "openshift.cluster.name"}` in that block does populate the Resource column via the LM Ingest API.
 - **Why:** Confirmed by reading the ConfigMap contents and tracing the data flow. `@type lm` uses `/rest/log/ingest` with explicit `_lm.resourceId`, which is the documented path that populates Resource correctly.
 - **How to apply:** Rework the ConfigMap for AlertManager webhook ingestion: `<source>` becomes `@type http` on port 9880, filter transforms the AlertManager JSON into a flat record with `cluster_name` injected from an ENV var (cluster identity known at deploy time, not parsed from payload), output stays `@type lm`. Deploy as a Deployment + Service (not a sidecar) because AlertManager is in a managed namespace where we cannot inject sidecars.
+
+## MCP Server Bugs (lm-mcp on lmryanmatuszewski portal)
+
+### `mcp__logicmonitor__create_logsource` returns HTTP 400 for all payloads
+
+- Reproduced 2026-04-21 and 2026-04-22 against multiple definition shapes: full canonical JSON (24 fields, WEBHOOK), minimal WEBHOOK (0 fields), minimal KUBERNETES_EVENT round-trip from the MCP's own `export_logsource` output, camelCase variant, snake_case variant. Every attempt returns generic HTTP 400 "Bad request".
+- The same payload submitted via direct REST `POST /santaba/rest/setting/logsources` with `X-Version: 3` header succeeds on first attempt.
+- Suspected root cause: the MCP wrapper does not send `X-Version: 3` and the LM REST endpoint rejects payloads under the older default version, OR the MCP wrapper re-serializes the payload in a form the v3 endpoint rejects.
+- **How to apply:** When the MCP `create_logsource` returns 400, do not iterate on the payload shape — fall back to the direct REST call:
+  ```
+  curl -X POST "https://<portal>.logicmonitor.com/santaba/rest/setting/logsources" \
+    -H "Authorization: Bearer $LM_BEARER_TOKEN" \
+    -H "Content-Type: application/json" \
+    -H "X-Version: 3" \
+    -d @logsource/<file>.json
+  ```
+- The MCP `import_logsource` is NOT a workaround — it expects LM Exchange JSON format, which is structurally different from REST API format. Our exported JSON is REST API format, so `import_logsource` rejects it with "module type does not match".
+
+### MCP read-side tools work fine
+
+- `get_logsource`, `get_logsources`, `export_logsource`, `delete_logsource`, `update_logsource` (untested under stress in this session but did not exhibit this bug) all functioned correctly.
+- The bug is isolated to `create_logsource`.
