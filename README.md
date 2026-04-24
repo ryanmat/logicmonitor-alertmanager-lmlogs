@@ -4,29 +4,37 @@ Kubernetes manifests and documentation for forwarding Prometheus AlertManager al
 
 ## Architecture
 
+Two ingestion paths, both sourced from the same PrometheusRule + AlertManager setup:
+
 ```
-+-----------------+     +------------------+     +-------------------+
-| PrometheusRule  | --> | AlertManager     | --> | LM Webhook        |
-| (fires alert)   |     | (routes by       |     | LogSource         |
-|                 |     |  severity/ns)    |     | (parses + extract)|
-+-----------------+     +------------------+     +-------------------+
-                                                         |
-                                                         v
-                                                 +-------------------+
-                                                 | LM Logs           |
-                                                 | (query, alert,    |
-                                                 |  dashboard)       |
-                                                 +-------------------+
+Path A (default, webhook):
++-----------------+     +------------------+     +-------------------+     +-----------+
+| PrometheusRule  | --> | AlertManager     | --> | LM Webhook        | --> | LM Logs   |
+| (fires alert)   |     | (routes by label)|     | LogSource (parse) |     |           |
++-----------------+     +------------------+     +-------------------+     +-----------+
+
+Path B (advanced, Fluentd forwarder — Resource column populated):
++-----------------+     +------------------+     +-------------------+     +-----------+
+| PrometheusRule  | --> | AlertManager     | --> | Fluentd Deployment| --> | LM Ingest |
+| (fires alert)   |     | (routes by label)|     | (@type http +     |     | /rest/log |
++-----------------+     +------------------+     |  @type lm)        |     +-----+-----+
+                                                 +-------------------+           |
+                                                                                 v
+                                                                           +-----------+
+                                                                           | LM Logs   |
+                                                                           | (Resource |
+                                                                           |  column   |
+                                                                           |  populated)|
+                                                                           +-----------+
 ```
 
-**Data flow:**
-1. Prometheus evaluates alerting rules defined in PrometheusRules
-2. AlertManager receives alerts and routes based on labels (namespace, severity)
-3. AlertManager POSTs JSON payload to LogicMonitor webhook endpoint
-4. LogicMonitor LogSource parses the payload and extracts structured fields
-5. Logs are queryable in LM Logs by `sourceName`, `cluster_name`, `alertname`, and 22 other fields
+**Path A (webhook, default):** AlertManager POSTs JSON directly to LM's webhook endpoint. LogSource regex-extracts 24 fields. Simple, no new pods. Resource column stays empty (platform limitation).
 
-**Known limitation:** webhook-based logs do NOT populate the Resource or Resource Type columns in the LM Logs UI. This is a platform behavior of webhook ingestion, not a configuration issue. For per-device log-to-alert correlation in the LM UI, use a collector-based ingestion path (Fluentd sidecar forwarding to the LM Ingest API). See `manifests/fluentd-sidecar/` for a starting point.
+**Path B (Fluentd forwarder, advanced):** AlertManager POSTs to an in-cluster Fluentd Service. Fluentd injects cluster identity, re-POSTs to `/rest/log/ingest`, which resolves `_lm.resourceId` via a device property match. Resource column populates to the matched cluster device. Details in `manifests/fluentd-alertmanager-forwarder/` and `docs/integration-guide.md` Section 15.
+
+The two paths coexist — customers can run both side-by-side during migration, or pick one.
+
+**Known limitation:** webhook-based logs do NOT populate the Resource or Resource Type columns in the LM Logs UI. This is a platform behavior of webhook ingestion, not a configuration issue. If the Resource column matters for your integration, deploy the Fluentd forwarder at `manifests/fluentd-alertmanager-forwarder/` as a second path alongside (or instead of) the webhook. See `docs/integration-guide.md` Section 15 for deployment steps.
 
 ## Prerequisites
 
@@ -221,7 +229,7 @@ These mappings populate `_resource.attributes` on each log for searchability. Th
 
 Webhook-based LogSources do not associate ingested logs with specific LM device records — the Resource and Resource Type columns remain empty on every webhook log, regardless of how resource mapping is configured or whether a device has a matching custom property. This was verified against the live portal with every permutation of `Regex`, `RegexGroup`, and `WebhookAttribute` methods, with and without matching device properties, using real AlertManager traffic from an ARO cluster.
 
-If you need log-alert correlation on a specific device in the LM UI, use collector-based ingestion. The Fluentd sidecar pattern (draft manifests in `manifests/fluentd-sidecar/`) receives the AlertManager webhook and re-forwards to LM's Ingest API (`/rest/log/ingest`) with an explicit `_lm.resourceId` header, which does populate the Resource column. A fully-fleshed AlertManager → Fluentd → LM Ingest manifest set is planned.
+For per-device log correlation, deploy the Fluentd forwarder at `manifests/fluentd-alertmanager-forwarder/`. The forwarder receives the AlertManager webhook in-cluster and re-emits each record to LM's Ingest API (`/rest/log/ingest`) with `resource_mapping` binding the log to the device whose `openshift.cluster.name` property matches the pod's `CLUSTER_NAME` env. Deployment steps are in `docs/integration-guide.md` Section 15.
 
 ### Cluster Identity in Alerts
 
@@ -347,7 +355,7 @@ oc get alertmanagerconfig -n <new-namespace>
 | Logs show `_lm.logsource_name = "default.webhook_logsource"` | LogSource filter misconfigured or webhook URL path segment doesn't match any LogSource. Remove any `SourceName` filter. |
 | Alerts not reaching LM | Add explicit `namespace` label to PrometheusRule alert definitions |
 | New logFields not populating after save | Normal — wait 2-5 minutes for LogSource cache propagation |
-| Resource column empty on logs | Expected — webhook ingestion doesn't populate Resource column. Use collector-based (Fluentd) ingestion if required. |
+| Resource column empty on logs | Expected — webhook ingestion doesn't populate Resource column. Deploy the Fluentd forwarder in `manifests/fluentd-alertmanager-forwarder/` (see `docs/integration-guide.md` Section 15). |
 | ARO egress blocked | Whitelist `*.logicmonitor.com:443` in ARO egress lockdown firewall rules |
 
 ## Bearer Token Rotation

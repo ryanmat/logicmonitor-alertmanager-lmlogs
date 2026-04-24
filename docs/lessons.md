@@ -110,15 +110,35 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 - Harmless but clutters the device's property list.
 - **How to apply:** Clean up debug-only custom properties at session close using `mcp__logicmonitor__update_device_property` (or via the portal UI) with a sentinel/empty value — or document their presence in session notes for later cleanup.
 
-## Fluentd Sidecar Forwarder (Planned)
+## Fluentd AlertManager Forwarder
 
-### Existing `manifests/fluentd-sidecar/` is for a different use case
+### `manifests/fluentd-sidecar/` remains the pod-log-forwarding pattern, NOT the AlertManager receiver
 
-- The current ConfigMap defines a Fluentd configuration that tails `/var/log/app/*.log` — a pod-log-forwarding sidecar pattern.
-- It is not an AlertManager webhook receiver.
-- The `@type lm` output plugin + `resource_mapping` config is the right primitive — `{"cluster_name": "openshift.cluster.name"}` in that block does populate the Resource column via the LM Ingest API.
-- **Why:** Confirmed by reading the ConfigMap contents and tracing the data flow. `@type lm` uses `/rest/log/ingest` with explicit `_lm.resourceId`, which is the documented path that populates Resource correctly.
-- **How to apply:** Rework the ConfigMap for AlertManager webhook ingestion: `<source>` becomes `@type http` on port 9880, filter transforms the AlertManager JSON into a flat record with `cluster_name` injected from an ENV var (cluster identity known at deploy time, not parsed from payload), output stays `@type lm`. Deploy as a Deployment + Service (not a sidecar) because AlertManager is in a managed namespace where we cannot inject sidecars.
+- The sidecar ConfigMap tails `/var/log/app/*.log` from a shared volume next to an application container. Valid for app-log-to-LM forwarding.
+- The AlertManager receiver use case lives in `manifests/fluentd-alertmanager-forwarder/` as a centralized Deployment + Service. Not a sidecar (AlertManager runs in the managed `openshift-user-workload-monitoring` namespace where we cannot inject sidecars).
+- **Why:** Two distinct Fluentd patterns coexist in this repo. Do not confuse them. Editing the sidecar ConfigMap to receive AlertManager webhooks breaks both use cases.
+
+### The `lm-logs` Helm chart is not extensible via values.yaml
+
+- Investigated `logicmonitor/k8s-helm-charts` path `lm-logs/` (master branch, 2026-04-23).
+- `values.yaml` (51 lines) exposes only image, resources, fluent buffer tuning, kubernetes cluster_name, volumes/mounts, nodeSelector/affinity/tolerations, imagePullSecrets, env. No `extraConfig`, `extraSources`, `extraMatch`, or `customConfigMap` key.
+- `templates/configmap.yaml` (97 lines) hardcodes the entire `fluent.conf` around `@type tail /var/log/containers/*.log` → `@type lm`.
+- Chart deploys a DaemonSet (`deamonset.yaml`), not a Deployment+Service HTTP receiver — wrong delivery model for an AlertManager webhook endpoint even if config injection existed.
+- **Why:** Extending the chart requires forking it or layering post-render kustomize patches, both of which add more customer operational cost than just shipping a standalone Deployment. A standalone Fluentd Deployment + Service is the simpler customer integration for the device-correlated log use case.
+- **How to apply:** Do not recommend customers run `helm upgrade` to layer AlertManager forwarding into the existing `lm-logs` chart — it will not work. Ship the dedicated `manifests/fluentd-alertmanager-forwarder/` stack as a parallel deployment.
+
+### `@type lm` plugin supports bearer_token auth — reuse the existing webhook token
+
+- The plugin source (`logicmonitor/lm-logs-fluentd`, `lib/fluent/plugin/out_lm.rb`) auto-selects bearer auth when `access_id` or `access_key` is blank and `bearer_token` is set.
+- The same `lm_logs_administrator`-role Bearer token that authenticates the webhook ingest endpoint also authenticates `/rest/log/ingest`.
+- **How to apply:** Customers can reuse the existing `logicmonitor-bearer-token` Secret for the Fluentd forwarder. Documented as the default in Section 15. Optional path: create a dedicated `openshift_alertmanager_fluentd` user for independent rotation.
+
+### `resource_mapping` binds logs to a device by matching a device property
+
+- `resource_mapping {"record_field": "device_property_name"}` reads the record's `record_field`, then LM's `/rest/log/ingest` endpoint looks up a device whose `device_property_name` property has that value. The matched device's ID becomes `_lm.resourceId` on the log.
+- For OpenShift cluster logs: `{"cluster_name": "openshift.cluster.name"}` where `cluster_name` is injected into the record via Fluentd's `record_transformer` from the `CLUSTER_NAME` pod env.
+- **Why:** This is the ONLY documented mechanism that populates the Resource column in LM Logs. Webhook ingestion has no equivalent resolution step — its `resource_mapping` only stores attribute metadata, never binds to a device.
+- **How to apply:** Any LogSource-style customer onboarding that claims device-correlated logs must route through `/rest/log/ingest`. Webhook ingestion is only sufficient when Resource column correlation is not needed.
 
 ## MCP Server Bugs (lm-mcp on lmryanmatuszewski portal)
 

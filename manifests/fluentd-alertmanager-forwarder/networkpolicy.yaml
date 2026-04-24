@@ -1,0 +1,26 @@
+# Description: Restrict ingress to the forwarder so only AlertManager pods can reach it.
+# Description: Egress allowed so Fluentd can POST to the LogicMonitor Ingest endpoint over HTTPS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lm-logs-forwarder
+  labels:
+    app.kubernetes.io/name: lm-logs-forwarder
+    app.kubernetes.io/component: alertmanager-forwarder
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lm-logs-forwarder
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-user-workload-monitoring
+      ports:
+        - port: 9880
+          protocol: TCP
+  egress:
+    - {}

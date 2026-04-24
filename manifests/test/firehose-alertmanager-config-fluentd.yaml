@@ -1,0 +1,30 @@
+# Description: AlertmanagerConfig routing firehose alerts to the in-cluster Fluentd forwarder.
+# Description: Runs in parallel with firehose-alertmanager-config.yaml so webhook vs Fluentd paths can be compared.
+apiVersion: monitoring.coreos.com/v1beta1
+kind: AlertmanagerConfig
+metadata:
+  name: logicmonitor-forwarder-firehose
+  labels:
+    openshift.io/user-monitoring: "true"
+spec:
+  route:
+    receiver: logicmonitor-forwarder-firehose
+    matchers:
+      - name: severity
+        matchType: "=~"
+        value: "critical|warning"
+      - name: alertname
+        matchType: "=~"
+        value: "Firehose.*"
+    continue: true
+    groupBy:
+      - alertname
+      - namespace
+    groupWait: 10s
+    groupInterval: 1m
+    repeatInterval: 2m
+  receivers:
+    - name: logicmonitor-forwarder-firehose
+      webhookConfigs:
+        - url: "http://lm-logs-forwarder.REPLACE_WITH_NAMESPACE.svc.cluster.local:9880/alertmanager.webhook"
+          sendResolved: true

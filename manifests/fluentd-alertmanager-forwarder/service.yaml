@@ -1,0 +1,18 @@
+# Description: ClusterIP Service exposing the Fluentd HTTP receiver on port 9880.
+# Description: AlertmanagerConfig webhookConfigs resolves this name to POST alerts in-cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lm-logs-forwarder
+  labels:
+    app.kubernetes.io/name: lm-logs-forwarder
+    app.kubernetes.io/component: alertmanager-forwarder
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: lm-logs-forwarder
+  ports:
+    - name: http
+      port: 9880
+      targetPort: 9880
+      protocol: TCP

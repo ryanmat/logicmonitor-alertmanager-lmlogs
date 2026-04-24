@@ -1,0 +1,13 @@
+# Description: Kustomization bundling the Fluentd AlertManager forwarder stack.
+# Description: Apply with `oc apply -k manifests/fluentd-alertmanager-forwarder/` after patching placeholders.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: logicmonitor-alertmanager-lmlogs

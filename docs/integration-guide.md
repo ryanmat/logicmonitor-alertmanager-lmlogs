@@ -19,7 +19,7 @@ Prometheus --> AlertManager --> LM Webhook LogSource --> LM Logs --> LogAlerts
 
 Webhook-based logs do NOT populate the Resource or Resource Type columns in the LM Logs UI. This is a platform behavior of LM's webhook ingestion pipeline, not a configuration issue. We verified this with every permutation of Regex/RegexGroup/WebhookAttribute methods, with and without matching device properties, against real AlertManager traffic.
 
-For log-to-alert correlation on a specific device in the LM UI, use collector-based ingestion. The `manifests/fluentd-sidecar/` directory contains draft manifests for a Fluentd forwarder that receives AlertManager webhooks and re-emits them to LM's Ingest API with an explicit `_lm.resourceId` — which does populate the Resource column. A fully-fleshed AlertManager→Fluentd→LM Ingest deployment is planned as a follow-up.
+For log-to-alert correlation on a specific device in the LM UI, use the Fluentd forwarder path described in Section 15. Alerts routed through the forwarder are ingested via LM's `/rest/log/ingest` endpoint with an explicit `_lm.resourceId` resolved from a device property match — that IS the mechanism that populates the Resource column.
 
 ## Prerequisites
 
@@ -451,7 +451,7 @@ Annotation fields (`description`, `message`, `summary`, `runbook_url`) can conta
 
 We tested every permutation of resource mapping (Regex, RegexGroup, WebhookAttribute methods; every combination of key/value patterns; with and without matching device custom properties) against real AlertManager traffic. The Resource and Resource Type columns in LM Logs never populate for webhook-ingested logs. This is a platform limitation.
 
-If you need per-device log correlation, use the Fluentd sidecar forwarder pattern (draft manifests in `manifests/fluentd-sidecar/`). Fluentd receives the webhook, extracts cluster identity, and re-POSTs to LM's Ingest API (`/rest/log/ingest`) with an explicit `_lm.resourceId` field — which DOES populate the Resource column.
+If you need per-device log correlation, use the Fluentd forwarder described in Section 15 (`manifests/fluentd-alertmanager-forwarder/`). Fluentd receives the AlertManager webhook, enriches the record with the cluster identity, and re-POSTs to LM's Ingest API (`/rest/log/ingest`) with `resource_mapping` resolving `_lm.resourceId` from a device property — which DOES populate the Resource column.
 
 ## 14. Troubleshooting
 
@@ -465,5 +465,131 @@ If you need per-device log correlation, use the Fluentd sidecar forwarder patter
 | New logFields not populating after save | Wait 2-5 minutes for LogSource cache propagation |
 | Free-text fields (description, message) look truncated | Regex pattern must be escape-aware: use `((?:[^"\\]|\\.)*)` not `([^"]+)` |
 | `cluster_id` logField empty | Regex must NOT have `^` anchor — LM's input is the full payload, not just the URL |
-| Resource column empty | Expected — webhook ingestion does not populate Resource. Use Fluentd sidecar forwarder for per-device correlation. |
+| Resource column empty | Expected — webhook ingestion does not populate Resource. Follow Section 15 to deploy the Fluentd forwarder for per-device correlation. |
 | Egress blocked (managed platforms) | Whitelist `*.logicmonitor.com:443` in egress firewall rules |
+
+## 15. Advanced: Device-correlated logs via Fluentd forwarder
+
+The webhook path in Sections 1-14 is the default integration and satisfies most use cases. If you specifically need the **Resource** column in LM Logs populated for per-device log correlation (navigation from an alert to the device view, per-device LMQL filters on `_resource.name`, device-scoped alert rules), deploy the Fluentd forwarder.
+
+### Architecture
+
+```
+Prometheus → AlertManager → [in-cluster Fluentd HTTP receiver, port 9880]
+                            → record_transformer injects cluster_name from env
+                            → @type lm output: resource_mapping + bearer auth
+                            → POST /rest/log/ingest
+                            → LM matches cluster_name against device property
+                            → log bound to matched device, Resource column populated
+```
+
+The forwarder is a 1-replica Deployment. AlertManager POSTs to an in-cluster ClusterIP Service; the Fluentd pod re-emits each payload to LogicMonitor's `/rest/log/ingest` endpoint with the `@type lm` output plugin. `resource_mapping` binds the log to the LM device whose `openshift.cluster.name` property matches the cluster name injected at pod deploy time.
+
+### Prerequisites
+
+- Everything from Sections 1-2 already in place (User Workload Monitoring enabled, Bearer token available, `logicmonitor-bearer-token` Secret deployed in the target namespace).
+- LM device representing your OpenShift cluster has a custom property `openshift.cluster.name` set to the value you will pass as `CLUSTER_NAME` below. Set via the LM portal (Resources > [device] > Info > Properties > Add) or via API:
+  ```
+  curl -X PUT "https://<portal>.logicmonitor.com/santaba/rest/device/devices/<id>/properties/openshift.cluster.name" \
+    -H "Authorization: Bearer <token>" \
+    -H "Content-Type: application/json" \
+    -H "X-Version: 3" \
+    -d '{"name": "openshift.cluster.name", "value": "<your-cluster-name>"}'
+  ```
+
+### Deploy the forwarder
+
+The manifests live in `manifests/fluentd-alertmanager-forwarder/`:
+
+```
+configmap.yaml       # Fluentd config (source, filter, match)
+deployment.yaml      # logicmonitor/lm-logs-k8s-fluentd:1.4.0 Deployment
+service.yaml         # ClusterIP on port 9880
+networkpolicy.yaml   # Allow ingress only from openshift-user-workload-monitoring
+kustomization.yaml
+```
+
+1. Edit `deployment.yaml` to replace the two env placeholders:
+   - `CLUSTER_NAME` — the value of your `openshift.cluster.name` device property
+   - `LM_COMPANY_NAME` — your LM portal name (the `<portal>` in `https://<portal>.logicmonitor.com`)
+2. Apply:
+   ```
+   oc apply -k manifests/fluentd-alertmanager-forwarder/ -n <namespace>
+   ```
+3. Verify the pod is Running and the HTTP receiver is listening:
+   ```
+   oc rollout status deploy/lm-logs-forwarder -n <namespace>
+   oc logs deploy/lm-logs-forwarder -n <namespace> --tail=40
+   ```
+   Expected log lines on startup: `starting fluentd`, `following tail of ...` (none for this config), `fluentd worker is now running`.
+
+### Route AlertManager to the forwarder
+
+Add a new AlertmanagerConfig alongside the existing webhook one. A reference is at `manifests/test/firehose-alertmanager-config-fluentd.yaml`. Minimum viable config for your workload:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1beta1
+kind: AlertmanagerConfig
+metadata:
+  name: logicmonitor-forwarder
+  namespace: <namespace>
+  labels:
+    openshift.io/user-monitoring: "true"
+spec:
+  route:
+    receiver: logicmonitor-forwarder
+    matchers:
+      - name: severity
+        matchType: "=~"
+        value: "critical|warning"
+    continue: true
+    groupBy:
+      - alertname
+      - namespace
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+  receivers:
+    - name: logicmonitor-forwarder
+      webhookConfigs:
+        - url: "http://lm-logs-forwarder.<namespace>.svc.cluster.local:9880/alertmanager.webhook"
+          sendResolved: true
+```
+
+The URL path segment `alertmanager.webhook` becomes the Fluentd event tag; the ConfigMap's `<match alertmanager.**>` picks it up. The forwarder Service is ClusterIP and the NetworkPolicy restricts ingress to `openshift-user-workload-monitoring`, so no external auth is needed between AlertManager and Fluentd. Authentication to LogicMonitor happens Fluentd → LM over HTTPS with the Bearer token.
+
+### Credentials
+
+The forwarder reuses the same `logicmonitor-bearer-token` Secret as the webhook path. The `lm_logs_administrator` role accepts both the webhook ingest and the log ingest endpoints. If you prefer independent rotation between the two paths, create a separate LM API user (e.g. `openshift_alertmanager_fluentd`) with the same role and deploy a second Secret; point the Deployment at that Secret instead.
+
+### Verification
+
+Query LM Logs for a forwarder log:
+
+```
+event_source = "alertmanager" AND _resource.name = "<your-cluster-name>"
+```
+
+The log's Resource column should show the device name, and clicking through should navigate to the device view. The log message is the raw AlertManager webhook JSON (the same payload the webhook path receives), so all LMQL substring filters work unchanged (`"alertname":"HighErrorRate"`, etc.).
+
+### When to prefer which path
+
+| Customer need | Path |
+|---|---|
+| Fast 5-minute onboarding, no new pods | Webhook (Sections 1-14) |
+| Resource column populated in LM Logs | Fluentd forwarder (this section) |
+| Per-device alert rules based on log content | Fluentd forwarder |
+| Strict minimum cluster footprint | Webhook |
+| Customer already runs lm-logs-k8s Helm chart for pod logs | Fluentd forwarder — deploys alongside, does not interact |
+
+The two paths coexist. Running both forwards each alert twice (once via webhook, once via Fluentd) and produces two log rows in LM Logs with `event_source` distinguishing them. Most deployments pick one.
+
+### Troubleshooting
+
+| Symptom | Resolution |
+|---|---|
+| Fluentd pod CrashLoopBackOff with "no such file: fluent.conf" | The ConfigMap name in `deployment.yaml` volumes must match the ConfigMap metadata.name |
+| Pod Running but no logs in LM after 5 min | Check `oc logs deploy/lm-logs-forwarder` for `401` (bad Bearer token) or `404` (`company_name` env wrong) |
+| Logs reach LM but Resource column still empty | Device is missing the `openshift.cluster.name` property, or the property value does not match the `CLUSTER_NAME` env on the pod exactly (case-sensitive on the value, property name is stored lowercase by LM) |
+| AlertManager reports connection refused to Fluentd | NetworkPolicy blocking — verify `openshift-user-workload-monitoring` namespace has the `kubernetes.io/metadata.name` label (this is an auto-label on OpenShift 4.12+; if missing, add it) |
+| Fluentd logs show buffer overflow | Increase `chunk_limit_size` and `total_limit_size` in `configmap.yaml` under the `<buffer>` block |

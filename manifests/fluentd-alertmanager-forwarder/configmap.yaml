@@ -1,0 +1,72 @@
+# Description: Fluentd config for the AlertManager forwarder Deployment.
+# Description: Receives AlertManager webhook POSTs, enriches, re-emits to LM Ingest with device resolution.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lm-logs-forwarder-config
+  labels:
+    app.kubernetes.io/name: lm-logs-forwarder
+    app.kubernetes.io/component: alertmanager-forwarder
+data:
+  fluent.conf: |
+    <system>
+      log_level "#{ENV['FLUENT_LOG_LEVEL'] || 'info'}"
+    </system>
+
+    # Receive AlertManager webhook POSTs. The URL path segment becomes the event tag
+    # (e.g. POST /alertmanager.webhook -> tag "alertmanager.webhook").
+    <source>
+      @type http
+      port 9880
+      bind 0.0.0.0
+      body_size_limit 10m
+      keepalive_timeout 30s
+      add_http_headers false
+      add_remote_addr false
+      <parse>
+        @type json
+      </parse>
+    </source>
+
+    # Liveness / readiness probe target. Returns 200 to TCP checks without recording events.
+    <source>
+      @type monitor_agent
+      bind 0.0.0.0
+      port 24220
+    </source>
+
+    # Inject cluster identity from the pod env, stash the raw AlertManager JSON as the
+    # log message, and tag the event source for easy LMQL filtering.
+    <filter alertmanager.**>
+      @type record_transformer
+      enable_ruby
+      <record>
+        cluster_name "#{ENV['CLUSTER_NAME']}"
+        event_source "alertmanager"
+        message ${record.to_json}
+      </record>
+    </filter>
+
+    # Forward to LM Ingest. resource_mapping binds each log to the device whose
+    # openshift.cluster.name property equals the record cluster_name field, which
+    # populates the Resource column in LM Logs.
+    <match alertmanager.**>
+      @type lm
+      company_name "#{ENV['LM_COMPANY_NAME']}"
+      bearer_token "#{ENV['LM_BEARER_TOKEN']}"
+      resource_mapping {"cluster_name": "openshift.cluster.name"}
+      compression gzip
+      debug false
+      include_metadata true
+      <buffer>
+        @type memory
+        flush_interval 1s
+        chunk_limit_size 5m
+        flush_thread_count 4
+        total_limit_size 256m
+        retry_type exponential_backoff
+        retry_max_interval 60s
+        retry_forever false
+        retry_max_times 5
+      </buffer>
+    </match>
