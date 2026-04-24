@@ -133,12 +133,26 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 - The same `lm_logs_administrator`-role Bearer token that authenticates the webhook ingest endpoint also authenticates `/rest/log/ingest`.
 - **How to apply:** Customers can reuse the existing `logicmonitor-bearer-token` Secret for the Fluentd forwarder. Documented as the default in Section 15. Optional path: create a dedicated `openshift_alertmanager_fluentd` user for independent rotation.
 
-### `resource_mapping` binds logs to a device by matching a device property
+### LM Ingest resource_mapping binding contract — `auto.*` properties, two-key match, and `_resource.type` required
 
 - `resource_mapping {"record_field": "device_property_name"}` reads the record's `record_field`, then LM's `/rest/log/ingest` endpoint looks up a device whose `device_property_name` property has that value. The matched device's ID becomes `_lm.resourceId` on the log.
-- For OpenShift cluster logs: `{"cluster_name": "openshift.cluster.name"}` where `cluster_name` is injected into the record via Fluentd's `record_transformer` from the `CLUSTER_NAME` pod env.
-- **Why:** This is the ONLY documented mechanism that populates the Resource column in LM Logs. Webhook ingestion has no equivalent resolution step — its `resource_mapping` only stores attribute metadata, never binds to a device.
-- **How to apply:** Any LogSource-style customer onboarding that claims device-correlated logs must route through `/rest/log/ingest`. Webhook ingestion is only sufficient when Resource column correlation is not needed.
+- **Critical constraint:** on this portal (lmryanmatuszewski), only `auto.*` properties resolve for ingest lookups. `system.*`, custom, and inherited properties are silently dropped (payload 202-accepted, never indexed).
+- **Critical constraint #2:** a single-key lookup like `{"auto.clustername": "rm-aro-cluster"}` or `{"auto.name": "default"}` (namespace) indexes the record (attributes populate) but does NOT bind the Resource column. Binding requires a TWO-KEY match — typically `{"auto.name": "<pod-name>", "auto.namespace": "<namespace>"}` — against an existing k8s pod device.
+- **Critical constraint #3:** the payload must carry `"_resource.type": "k8s"` at top level (set via the `@type lm` plugin's `resource_type` config param) for the pod-device lookup to succeed.
+- **Why:** Verified by direct `/rest/log/ingest` probes against device 444651 (rm-aro-cluster). Variants tried:
+  - `{"openshift.cluster.name": "rm-aro-cluster"}` → 202-accepted, NOT indexed (custom prop)
+  - `{"system.hostname": "rm-aro-cluster"}` → 202-accepted, NOT indexed (system prop)
+  - `{"system.deviceId": "444651"}` → 202-accepted, NOT indexed (system prop)
+  - `{"auto.clustername": "rm-aro-cluster"}` → indexed, Resource column EMPTY (single-key, cluster-level device)
+  - `{"auto.name": "default"}` alone → indexed, Resource column EMPTY (single-key, namespace)
+  - `{"auto.name": "pod-name", "auto.namespace": "ns"}` + `_resource.type=k8s` → indexed AND Resource column BOUND to the pod device
+- **How to apply:** For AlertManager alert forwarding, the Fluentd config must extract `alerts[0].labels.pod` and `alerts[0].labels.namespace` into top-level record fields, then resource_map both with `_resource.type=k8s`. Alerts without a pod label still index but will have an empty Resource column. Do NOT waste time trying to bind cluster-level logs to the cluster device (444651) — its `auto.*` properties (`auto.clustername`, `auto.createdBy`, `auto.resourceTypeCategory`) don't form a lookup key that LM ingest will resolve. The cluster device is "Management and Governance" resource_type, not "k8s", so ingest won't bind to it.
+
+### Webhook ingestion's `resource_mapping` is metadata-only, not a device binding
+
+- Webhook LogSource `resourceMapping` populates `_resource.attributes` on each log but never binds Resource column (platform limitation — see earlier lesson).
+- The ingest path (`/rest/log/ingest`) is the ONLY documented path that populates Resource column, and only under the strict `auto.*` + two-key + `_resource.type=k8s` contract above.
+- **How to apply:** Customer onboarding that claims device-correlated logs must route through `/rest/log/ingest` AND extract per-alert pod/namespace labels for binding. Webhook ingestion is only sufficient when Resource column correlation is not needed.
 
 ## MCP Server Bugs (lm-mcp on lmryanmatuszewski portal)
 

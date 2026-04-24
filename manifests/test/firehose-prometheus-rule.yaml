@@ -125,3 +125,18 @@ spec:
           annotations:
             summary: "Alert WITHOUT cluster_name label (simulates customer without externalLabels)"
             description: "Tests fallback resource identification via externalURL."
+
+    - name: logicmonitor.firehose.real-pod-resource
+      interval: 30s
+      rules:
+        - alert: FirehoseRealPodResource
+          expr: vector(1)
+          for: 30s
+          labels:
+            severity: warning
+            namespace: "REPLACE_WITH_NAMESPACE"
+            pod: "REPLACE_WITH_REAL_POD"
+            cluster_name: "REPLACE_WITH_CLUSTER_NAME"
+          annotations:
+            summary: "Alert with real pod/namespace for LM Resource binding demo"
+            description: "Fluentd path: labels map to auto.name+auto.namespace so LM Logs Resource column populates to a real pod device in the same namespace. OpenShift's leaf-prometheus scope injects namespace from the PrometheusRule's own namespace — so the pod label must reference a pod that actually lives in REPLACE_WITH_NAMESPACE, not in an arbitrary other namespace."

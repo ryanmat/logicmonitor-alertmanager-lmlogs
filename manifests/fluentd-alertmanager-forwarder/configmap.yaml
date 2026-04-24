@@ -35,26 +35,32 @@ data:
       port 24220
     </source>
 
-    # Inject cluster identity from the pod env, stash the raw AlertManager JSON as the
-    # log message, and tag the event source for easy LMQL filtering.
+    # Extract pod and namespace from the first alert's labels so the LM Ingest path
+    # can bind each log to the matching k8s pod device. Stash the raw JSON as the
+    # message body and tag the event source for easy LMQL filtering.
     <filter alertmanager.**>
       @type record_transformer
       enable_ruby
       <record>
+        alert_pod ${record.dig('alerts', 0, 'labels', 'pod')}
+        alert_namespace ${record.dig('alerts', 0, 'labels', 'namespace')}
         cluster_name "#{ENV['CLUSTER_NAME']}"
         event_source "alertmanager"
         message ${record.to_json}
       </record>
     </filter>
 
-    # Forward to LM Ingest. resource_mapping binds each log to the device whose
-    # openshift.cluster.name property equals the record cluster_name field, which
-    # populates the Resource column in LM Logs.
+    # Forward to LM Ingest. The two-key resource_mapping (auto.name + auto.namespace)
+    # combined with _resource.type=k8s is the documented contract that binds the log
+    # to an existing k8s pod device, which populates the Resource column in LM Logs.
+    # Alerts without a pod label still index (cluster_name carries identity in the
+    # message body) but the Resource column remains empty for those rows.
     <match alertmanager.**>
       @type lm
       company_name "#{ENV['LM_COMPANY_NAME']}"
       bearer_token "#{ENV['LM_BEARER_TOKEN']}"
-      resource_mapping {"cluster_name": "openshift.cluster.name"}
+      resource_type "k8s"
+      resource_mapping {"alert_pod": "auto.name", "alert_namespace": "auto.namespace"}
       compression gzip
       debug false
       include_metadata true

@@ -476,30 +476,44 @@ The webhook path in Sections 1-14 is the default integration and satisfies most 
 
 ```
 Prometheus → AlertManager → [in-cluster Fluentd HTTP receiver, port 9880]
-                            → record_transformer injects cluster_name from env
-                            → @type lm output: resource_mapping + bearer auth
+                            → record_transformer extracts alerts[0].labels.pod
+                              and alerts[0].labels.namespace into top-level fields
+                            → @type lm output:
+                                resource_type "k8s"
+                                resource_mapping {alert_pod: auto.name,
+                                                  alert_namespace: auto.namespace}
+                                bearer_token from logicmonitor-bearer-token Secret
                             → POST /rest/log/ingest
-                            → LM matches cluster_name against device property
-                            → log bound to matched device, Resource column populated
+                            → LM matches the pod+namespace pair against an
+                              existing Argus-registered k8s pod device
+                            → log bound to that device, Resource column populated
 ```
 
-The forwarder is a 1-replica Deployment. AlertManager POSTs to an in-cluster ClusterIP Service; the Fluentd pod re-emits each payload to LogicMonitor's `/rest/log/ingest` endpoint with the `@type lm` output plugin. `resource_mapping` binds the log to the LM device whose `openshift.cluster.name` property matches the cluster name injected at pod deploy time.
+The forwarder is a 1-replica Deployment. AlertManager POSTs to an in-cluster ClusterIP Service; the Fluentd pod re-emits each payload to LogicMonitor's `/rest/log/ingest` endpoint with the `@type lm` output plugin.
+
+### Binding contract (important — read before deploying)
+
+LM's `/rest/log/ingest` endpoint binds a log to a device (populates the Resource column) only when ALL of these hold:
+
+1. The payload carries `"_resource.type": "k8s"` at the top level.
+2. `_lm.resourceId` contains **two keys together**: `{"auto.name": "<pod>", "auto.namespace": "<namespace>"}`.
+3. The pod+namespace pair matches an **existing k8s pod device** that LogicMonitor's Argus agent has already registered for your cluster.
+
+Consequences:
+
+- Resource binding works for **alerts that carry a pod label in the same namespace the PrometheusRule fires from**. OpenShift's user-workload-monitoring leaf-prometheus scope force-injects the `namespace` label to match the rule's own namespace, overriding any namespace label set on the rule itself. The pod label is NOT rewritten, so any pod name you put in a rule label flows through — but that pod must actually exist in the rule's namespace for binding to succeed.
+- Alerts **without a pod label** (cluster-level alerts, node-level alerts, deployment-level alerts) will still be accepted and indexed, but `_resource.attributes` stays empty and the Resource column stays empty.
+- `system.*` and custom properties are **silently dropped** by the ingest resolver. Only `auto.*` properties bind. The Argus agent registers pods with `auto.name` + `auto.namespace` automatically, which is why the contract targets those specific keys.
+- The cluster-level device (the "Kubernetes Cluster: ..." resource) cannot be a binding target for pod-log ingest — its resource type is `Management and Governance`, not `k8s`. There is no supported ingest shape that binds logs to the cluster device itself. If you need cluster-level correlation, bind alerts to any stable pod in any monitored namespace (for example the forwarder pod itself) and use the alert's labels/annotations to carry the original alert context.
 
 ### Prerequisites
 
 - Everything from Sections 1-2 already in place (User Workload Monitoring enabled, Bearer token available, `logicmonitor-bearer-token` Secret deployed in the target namespace).
-- LM device representing your OpenShift cluster has a custom property `openshift.cluster.name` set to the value you will pass as `CLUSTER_NAME` below. Set via the LM portal (Resources > [device] > Info > Properties > Add) or via API:
-  ```
-  curl -X PUT "https://<portal>.logicmonitor.com/santaba/rest/device/devices/<id>/properties/openshift.cluster.name" \
-    -H "Authorization: Bearer <token>" \
-    -H "Content-Type: application/json" \
-    -H "X-Version: 3" \
-    -d '{"name": "openshift.cluster.name", "value": "<your-cluster-name>"}'
-  ```
+- LogicMonitor Argus agent already monitoring the cluster. Verify: in the LM portal, Resources → expand the Kubernetes Cluster device → confirm you see pod devices under each namespace. Those pod devices are the binding targets. No custom property setup is required — `auto.name` and `auto.namespace` are populated automatically by Argus.
 
 ### Deploy the forwarder
 
-The manifests live in `manifests/fluentd-alertmanager-forwarder/`:
+Manifests live in `manifests/fluentd-alertmanager-forwarder/`:
 
 ```
 configmap.yaml       # Fluentd config (source, filter, match)
@@ -510,7 +524,7 @@ kustomization.yaml
 ```
 
 1. Edit `deployment.yaml` to replace the two env placeholders:
-   - `CLUSTER_NAME` — the value of your `openshift.cluster.name` device property
+   - `CLUSTER_NAME` — your cluster's display name in LM (for free-text search; does not affect binding)
    - `LM_COMPANY_NAME` — your LM portal name (the `<portal>` in `https://<portal>.logicmonitor.com`)
 2. Apply:
    ```
@@ -521,7 +535,7 @@ kustomization.yaml
    oc rollout status deploy/lm-logs-forwarder -n <namespace>
    oc logs deploy/lm-logs-forwarder -n <namespace> --tail=40
    ```
-   Expected log lines on startup: `starting fluentd`, `following tail of ...` (none for this config), `fluentd worker is now running`.
+   Expected startup log lines: `starting fluentd`, `adding source type="http"`, `Access Id or access key blank / null. Using bearer token for authentication.`, `fluentd worker is now running`.
 
 ### Route AlertManager to the forwarder
 
@@ -558,38 +572,73 @@ spec:
 
 The URL path segment `alertmanager.webhook` becomes the Fluentd event tag; the ConfigMap's `<match alertmanager.**>` picks it up. The forwarder Service is ClusterIP and the NetworkPolicy restricts ingress to `openshift-user-workload-monitoring`, so no external auth is needed between AlertManager and Fluentd. Authentication to LogicMonitor happens Fluentd → LM over HTTPS with the Bearer token.
 
+### PrometheusRule label requirements for Resource binding
+
+To get Resource column populated, the alert must carry both:
+
+- `namespace` — set automatically by the leaf-prometheus scope (equal to the PrometheusRule's own namespace)
+- `pod` — must match the name of a real, currently-running pod in that namespace that LogicMonitor has registered as a k8s device
+
+Example that binds correctly:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: example-alerts
+  namespace: my-app
+  labels:
+    openshift.io/prometheus-rule-evaluation-scope: leaf-prometheus
+spec:
+  groups:
+    - name: example.alerts
+      rules:
+        - alert: PodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace="my-app"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod is restarting frequently"
+```
+
+In this example AlertManager's alerts include the `namespace` label (forced by leaf-prometheus) and the `pod` label (extracted from the metric). Fluentd's `record_transformer` pulls `alerts[0].labels.pod` and `alerts[0].labels.namespace` into `alert_pod` and `alert_namespace`, which the `@type lm` plugin's `resource_mapping` directive feeds into `_lm.resourceId` as `{"auto.name": "<pod>", "auto.namespace": "<namespace>"}`. LM resolves that to the corresponding pod device and binds the log.
+
 ### Credentials
 
 The forwarder reuses the same `logicmonitor-bearer-token` Secret as the webhook path. The `lm_logs_administrator` role accepts both the webhook ingest and the log ingest endpoints. If you prefer independent rotation between the two paths, create a separate LM API user (e.g. `openshift_alertmanager_fluentd`) with the same role and deploy a second Secret; point the Deployment at that Secret instead.
 
 ### Verification
 
-Query LM Logs for a forwarder log:
+In LM Logs, filter for forwarder rows:
 
 ```
-event_source = "alertmanager" AND _resource.name = "<your-cluster-name>"
+_user.agent ~ "lm-logs-fluentd" AND event_source = "alertmanager"
 ```
 
-The log's Resource column should show the device name, and clicking through should navigate to the device view. The log message is the raw AlertManager webhook JSON (the same payload the webhook path receives), so all LMQL substring filters work unchanged (`"alertname":"HighErrorRate"`, etc.).
+Each row's Resource column should show the pod device the alert maps to (e.g. `<pod-name>-pod-<namespace>-<cluster>`), with Resource Type `k8s`. Click into the overview pane to see `_resource.attributes: {"auto.name": "...", "auto.namespace": "..."}` confirming the binding.
+
+Alerts without a pod label will still index here but have an empty Resource column — that is expected and not a misconfiguration.
 
 ### When to prefer which path
 
 | Customer need | Path |
 |---|---|
 | Fast 5-minute onboarding, no new pods | Webhook (Sections 1-14) |
-| Resource column populated in LM Logs | Fluentd forwarder (this section) |
+| Resource column populated for pod-level alerts | Fluentd forwarder (this section) |
 | Per-device alert rules based on log content | Fluentd forwarder |
 | Strict minimum cluster footprint | Webhook |
 | Customer already runs lm-logs-k8s Helm chart for pod logs | Fluentd forwarder — deploys alongside, does not interact |
 
-The two paths coexist. Running both forwards each alert twice (once via webhook, once via Fluentd) and produces two log rows in LM Logs with `event_source` distinguishing them. Most deployments pick one.
+The two paths coexist. Running both forwards each alert twice (once via webhook, once via Fluentd) and produces two log rows in LM Logs distinguishable by `_user.agent` (`cloud-webhooks` vs `lm-logs-fluentd/1.2.8`). Most deployments pick one.
 
 ### Troubleshooting
 
 | Symptom | Resolution |
 |---|---|
 | Fluentd pod CrashLoopBackOff with "no such file: fluent.conf" | The ConfigMap name in `deployment.yaml` volumes must match the ConfigMap metadata.name |
-| Pod Running but no logs in LM after 5 min | Check `oc logs deploy/lm-logs-forwarder` for `401` (bad Bearer token) or `404` (`company_name` env wrong) |
-| Logs reach LM but Resource column still empty | Device is missing the `openshift.cluster.name` property, or the property value does not match the `CLUSTER_NAME` env on the pod exactly (case-sensitive on the value, property name is stored lowercase by LM) |
-| AlertManager reports connection refused to Fluentd | NetworkPolicy blocking — verify `openshift-user-workload-monitoring` namespace has the `kubernetes.io/metadata.name` label (this is an auto-label on OpenShift 4.12+; if missing, add it) |
+| Pod Running but no logs in LM after 5 min | Check `oc logs deploy/lm-logs-forwarder` for `401` (bad Bearer token) or `404` (`company_name` env wrong). Also confirm with `oc port-forward deploy/lm-logs-forwarder 24220:24220` then `curl localhost:24220/api/plugins.json` — the `lm` plugin's `emit_records` and `write_count` must be advancing |
+| Fluentd reports 202 responses but logs never appear in LM Logs search | The ingest binding failed silently. Two common causes: (a) the `pod` label on the alert references a pod that does not exist in the `namespace` label's value, or (b) the mapping uses a non-`auto.*` property. Run a direct probe via `curl ... /rest/log/ingest -d '[{"message":"probe","timestamp":"...","_resource.type":"k8s","_lm.resourceId":{"auto.name":"<real-pod>","auto.namespace":"<ns>"}}]'` and verify it appears in LM Logs |
+| Resource column empty only on certain alerts | Those alerts do not carry a `pod` label. This is expected. Add a pod label to the PrometheusRule if Resource correlation is required, or accept empty Resource for cluster/node-level alerts |
+| AlertManager reports connection refused to Fluentd | NetworkPolicy blocking — verify `openshift-user-workload-monitoring` namespace has the `kubernetes.io/metadata.name` label (auto-label on OpenShift 4.12+; if missing, add it) |
 | Fluentd logs show buffer overflow | Increase `chunk_limit_size` and `total_limit_size` in `configmap.yaml` under the `<buffer>` block |
