@@ -4,15 +4,25 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
 
 ## LogicMonitor Webhook LogSource
 
-### Webhook ingestion does not populate the Resource or Resource Type columns
+### Webhook ingestion CAN populate the Resource column — the earlier "platform limitation" conclusion was wrong
 
-- Tested every permutation of `Regex`, `RegexGroup`, and `WebhookAttribute` methods on resource mappings.
-- Tested with and without custom properties (`openshift.cluster.name`, `a_genURL`, `system.displayname`, `auto.clustername`) set on matching devices.
-- Tested against real AlertManager traffic from an ARO cluster, not synthetic curl alone.
-- Reconfirmed by importing Sutter Health's exact production LogSource into our portal: `_resource.attributes` populates with the extracted attribute keys, but the Resource column itself stays empty even when device properties match the extracted values exactly.
-- The `_resource.attributes` array is metadata extraction output, not a device binding. Resource column binding requires a separate mechanism that webhook ingestion does not provide.
-- **Why:** Platform behavior of LM's webhook ingestion pipeline. Undocumented in LM's public docs. The only path that populates the Resource column is collector-based ingestion via `/rest/log/ingest` with an explicit `_lm.resourceId` in the payload.
-- **How to apply:** Do not invest more time trying to make webhook resource mapping populate the Resource column. For per-device log-to-alert correlation in the LM UI, pivot to collector-based ingestion (Fluentd forwarder to `/rest/log/ingest` with explicit `_lm.resourceId` resolved via the `@type lm` output plugin's `resource_mapping` config).
+- Validated against the live portal 2026-04-24: LogSource id 26 with a single resourceMapping `openshift.cluster.name` ← `"cluster_name"` regex successfully binds webhook logs to device 444651 (where `openshift.cluster.name = rm-aro-cluster` is a custom property). Resource column populates to `rm-aro-cluster` on every firehose row. `_user.agent: "cloud-webhooks"`, `_lm.logsource_type: "webhook"` — pure webhook path, no Fluentd involvement.
+- Prior sessions' failures (2026-04-21 through 2026-04-23) tested resourceMappings whose declared keys did not correspond to real custom property values on the target device (`openshift.instance.name`, `openshift.alert.name`, `a_genURL` with `^` anchor bug). Every lookup silently missed → `_resource.attributes` populated as metadata, Resource column stayed empty, and the behaviour got mis-generalized to "webhook can never bind Resource, period."
+- LM's webhook resolver DOES perform device lookup by property match — it just reports zero diagnostic signal when no device matches.
+- **Binding contract (webhook path):**
+  1. No `SourceName` filter blocking dispatch. Leave `filters: []` empty.
+  2. Use `RegexGroup` method on the mapping so only the capture group is stored.
+  3. The mapping's declared `key` must be an existing custom property on the target device, AND the extracted value must equal that property's value.
+  4. The target device must NOT be assigned to a non-default Log Partition (see the Log Partitions lesson below) — that intercepts the logs before they reach the default search view.
+- **How to apply:** For OpenShift AlertManager integration, the canonical `openshift.cluster.name` ← `"cluster_name"\s*:\s*"([^"]+)"` mapping works out of the box when the LM-container integration has set that custom property on the cluster device. `auto.clustername` against the same cluster device works the same way. Do not waste time adding multiple mappings — one well-chosen mapping is enough. Do not reach for the Fluentd forwarder unless you specifically need pod-level Resource binding.
+
+### LM Log Partitions on a device intercept logs from the default search view
+
+- A device can be assigned to a non-default Log Partition in LM (under the device's Log Partitions / Settings). Once assigned, all logs bound to that device land in that partition.
+- Logs in non-default partitions do NOT appear in the standard LM Logs search or a Resource's Logs tab by default. They are queryable only by scoping to that partition explicitly.
+- Symptom: webhook POSTs return 202, LogSource extracts fields correctly, device binding succeeds in `_resource.attributes` — but LM Logs search returns zero rows for the cluster/device, even with broad queries like `_message ~ "alertmanager"`.
+- Root cause of the illusion that "webhook can't bind Resource": during 2026-04-21 through 2026-04-23, device 444651 had an extra partition assignment that routed all webhook-ingested logs into a non-default partition. The default search view never showed them, which masqueraded as "Resource column never populates" — when in reality, the logs WERE binding, they were just filed elsewhere. Ryan discovered this on 2026-04-24 by deleting the extra partition; rows immediately started surfacing with Resource populated.
+- **How to apply:** When webhook ingestion appears to silently drop despite correct LogSource + resourceMapping + matching device property, check the target device's Log Partition assignments first. Remove any non-default partition routing unless you have a documented reason to keep it. Add this check before blaming the LogSource config or concluding "platform limitation."
 
 ### `SourceName` filter with a mismatched value silently routes all logs to `default.webhook_logsource`
 
@@ -148,11 +158,14 @@ Rules learned from debugging sessions on this repository. Reviewed at session st
   - `{"auto.name": "pod-name", "auto.namespace": "ns"}` + `_resource.type=k8s` → indexed AND Resource column BOUND to the pod device
 - **How to apply:** For AlertManager alert forwarding, the Fluentd config must extract `alerts[0].labels.pod` and `alerts[0].labels.namespace` into top-level record fields, then resource_map both with `_resource.type=k8s`. Alerts without a pod label still index but will have an empty Resource column. Do NOT waste time trying to bind cluster-level logs to the cluster device (444651) — its `auto.*` properties (`auto.clustername`, `auto.createdBy`, `auto.resourceTypeCategory`) don't form a lookup key that LM ingest will resolve. The cluster device is "Management and Governance" resource_type, not "k8s", so ingest won't bind to it.
 
-### Webhook ingestion's `resource_mapping` is metadata-only, not a device binding
+### Webhook path and ingest path both bind Resource — they resolve through different contracts
 
-- Webhook LogSource `resourceMapping` populates `_resource.attributes` on each log but never binds Resource column (platform limitation — see earlier lesson).
-- The ingest path (`/rest/log/ingest`) is the ONLY documented path that populates Resource column, and only under the strict `auto.*` + two-key + `_resource.type=k8s` contract above.
-- **How to apply:** Customer onboarding that claims device-correlated logs must route through `/rest/log/ingest` AND extract per-alert pod/namespace labels for binding. Webhook ingestion is only sufficient when Resource column correlation is not needed.
+- **Webhook path** (`/rest/api/v1/webhook/ingest/<segment>`): resolver runs each LogSource resourceMapping regex against the raw JSON body, extracts a value, and looks up a device whose declared property (by key) equals that value. Any property type works (custom, `openshift.*`, `auto.*`). Single-key lookup is sufficient. Binds to the matched device regardless of its `system.devicetype`.
+- **Ingest path** (`/rest/log/ingest`): resolver reads `_lm.resourceId` from the payload as a dict of property-key → property-value, matches against devices. Empirically on this portal, only `auto.*` properties resolve, and pod-device binding requires two-key `{"auto.name": "...", "auto.namespace": "..."}` + top-level `_resource.type: "k8s"`. Cluster-level devices (resource type "Management and Governance") are not ingest-resolvable.
+- Granularity trade-off:
+  - Webhook path binds to the cluster device — coarse, sufficient for most customers, zero new infrastructure.
+  - Ingest path (via Fluentd forwarder) binds to individual pod devices — finer granularity, adds a Deployment+Service+NetworkPolicy.
+- **How to apply:** Default customers to the webhook path with `openshift.cluster.name` ← `cluster_name` mapping. Reach for the Fluentd forwarder only when per-pod navigation is a requirement AND the customer's alerts carry pod labels reliably.
 
 ## MCP Server Bugs (lm-mcp on lmryanmatuszewski portal)
 

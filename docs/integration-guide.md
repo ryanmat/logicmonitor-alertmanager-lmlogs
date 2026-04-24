@@ -15,11 +15,16 @@ Prometheus --> AlertManager --> LM Webhook LogSource --> LM Logs --> LogAlerts
 5. Logs are queryable by `sourceName`, `cluster_name`, `alertname`, `severity`, and other extracted fields.
 6. LogAlerts evaluate log patterns and generate LogicMonitor alerts.
 
-## Known Limitation
+## Resource Column Binding (Webhook Path)
 
-Webhook-based logs do NOT populate the Resource or Resource Type columns in the LM Logs UI. This is a platform behavior of LM's webhook ingestion pipeline, not a configuration issue. We verified this with every permutation of Regex/RegexGroup/WebhookAttribute methods, with and without matching device properties, against real AlertManager traffic.
+Webhook-ingested logs DO populate the Resource and Resource Type columns in the LM Logs UI when the LogSource's `resourceMapping` extracts a value that matches a real custom property on the target device. The canonical LogSource in `logsource/OpenShift_AlertManager_Webhook.json` maps `openshift.cluster.name` ← the payload's `cluster_name` label, which binds to the cluster device (where LM's container integration has set the `openshift.cluster.name` custom property). Result: every AlertManager alert row shows Resource = `<cluster-name>`, Resource Type = the cluster device's type, and the Kubernetes Cluster group hierarchy.
 
-For log-to-alert correlation on a specific device in the LM UI, use the Fluentd forwarder path described in Section 15. Alerts routed through the forwarder are ingested via LM's `/rest/log/ingest` endpoint with an explicit `_lm.resourceId` resolved from a device property match — that IS the mechanism that populates the Resource column.
+Two prerequisites make this work end-to-end:
+
+1. **Matching device property.** The cluster device in LM must have a `openshift.cluster.name` custom property whose value equals the `cluster_name` externalLabel you configure in OpenShift's user-workload-monitoring config. The LM-container Helm chart sets this automatically for Argus-monitored clusters. If you're onboarding a cluster that is not yet monitored by Argus, set the property manually on the cluster device before expecting Resource column to populate.
+2. **Default Log Partition on the device.** If the cluster device is assigned to a non-default Log Partition, logs land in that partition and never surface in the standard LM Logs search — even though they ARE binding to the device correctly. Check the device's Log Partition setting and remove any non-default partition assignment unless you have a specific retention or residency reason for keeping it. Symptom of this gotcha: webhook POSTs return 202, field extraction looks correct on sampled rows, but broad LMQL queries return zero hits.
+
+If you need finer-grained binding (per-pod rather than per-cluster), Section 15 covers the Fluentd forwarder path that binds each alert to the specific pod device referenced in the alert's `pod` label.
 
 ## Prerequisites
 
@@ -155,15 +160,13 @@ All logFields use `Dynamic Group Regex` (`RegexGroup`) method.
 
 ### Resource Mapping
 
-These mappings populate `_resource.attributes` on each log for metadata searchability. They do NOT populate the Resource or Resource Type columns in the UI — see the Known Limitation section above.
+The canonical LogSource ships with a single `resourceMapping` entry. It is the mechanism that binds each log row to a device and populates the Resource column — see "Resource Column Binding (Webhook Path)" near the top of this guide for the full contract.
 
-| Method | Key | Value | Purpose |
+| Method | Key | Value | Effect |
 |---|---|---|---|
-| RegexGroup | `openshift.instance.name` | `"instance_name"\s*:\s*"([^"]+)"` | Instance name attribute (extracts only when an `instance_name` label is present) |
-| RegexGroup | `openshift.alert.name` | `"alertname"\s*:\s*"([^"]+)"` | Alert name attribute (always populates) |
-| Regex | `a_genURL` | `^https:\/\/[^\/]*?\.apps\.([^.]+)\.` | Cluster ID from console URL — kept for compatibility with the SMBC-derived reference LogSource. The `^` anchor and `Regex` method mean this mapping never extracts a value against an AlertManager payload, but it does not block dispatch. The cluster identifier is reliably available via the `cluster_id` logField (without the anchor). |
+| RegexGroup | `openshift.cluster.name` | `"cluster_name"\s*:\s*"([^"]+)"` | Extracts `cluster_name` from `commonLabels` and binds the log to the device whose `openshift.cluster.name` custom property equals that value. Resource column populates to that device's name. |
 
-WebHook LogSources require at least one resource mapping configured at create time (the LM API rejects an empty `resourceMapping` array on a `WEBHOOK` LogSource). The three mappings above are the proven-working set carried over from the SMBC reference — leave them in place.
+WebHook LogSources require at least one resource mapping configured at create time — the LM API rejects an empty `resourceMapping` array on a `WEBHOOK` LogSource. The single mapping above satisfies that requirement AND performs useful device binding, so do not delete it.
 
 ## 4. Prepare the Target Namespace
 
@@ -447,11 +450,16 @@ The `openshift_alertmanager` segment at the end of the webhook URL is what LM us
 
 Annotation fields (`description`, `message`, `summary`, `runbook_url`) can contain embedded `\"` (JSON-escaped quotes). The pattern `((?:[^"\\]|\\.)*)` handles these correctly. A simpler `([^"]+)` pattern truncates at the first escaped quote, producing truncated field values silently.
 
-### Resource Column Does Not Populate for Webhook Logs
+### Resource Column Binding for Webhook Logs
 
-We tested every permutation of resource mapping (Regex, RegexGroup, WebhookAttribute methods; every combination of key/value patterns; with and without matching device custom properties) against real AlertManager traffic. The Resource and Resource Type columns in LM Logs never populate for webhook-ingested logs. This is a platform limitation.
+Webhook-ingested logs bind to the cluster device when the LogSource's `resourceMapping` regex extracts a value that matches a real custom property on the device. The canonical LogSource maps `openshift.cluster.name` ← the payload's `cluster_name` label. Result: Resource = cluster device name, Resource Type = cluster type, Groups populated with the Kubernetes Cluster hierarchy.
 
-If you need per-device log correlation, use the Fluentd forwarder described in Section 15 (`manifests/fluentd-alertmanager-forwarder/`). Fluentd receives the AlertManager webhook, enriches the record with the cluster identity, and re-POSTs to LM's Ingest API (`/rest/log/ingest`) with `resource_mapping` resolving `_lm.resourceId` from a device property — which DOES populate the Resource column.
+Two independent things must both be true for Resource column to populate end to end:
+
+- The device has the custom property the mapping targets (set automatically by LM-container Argus integration; set manually via portal or REST API if you're onboarding a cluster that isn't yet Argus-monitored).
+- The device is NOT assigned to a non-default Log Partition. Non-default partitions intercept bound logs silently and keep them out of the standard search view. Verify via Resources → [cluster device] → Log Partition setting.
+
+For per-pod Resource binding (finer granularity than per-cluster), use the Fluentd forwarder in Section 15 — it binds each alert to the specific pod device referenced in the alert's `pod` label via LM's `/rest/log/ingest` endpoint.
 
 ## 14. Troubleshooting
 
@@ -465,12 +473,14 @@ If you need per-device log correlation, use the Fluentd forwarder described in S
 | New logFields not populating after save | Wait 2-5 minutes for LogSource cache propagation |
 | Free-text fields (description, message) look truncated | Regex pattern must be escape-aware: use `((?:[^"\\]|\\.)*)` not `([^"]+)` |
 | `cluster_id` logField empty | Regex must NOT have `^` anchor — LM's input is the full payload, not just the URL |
-| Resource column empty | Expected — webhook ingestion does not populate Resource. Follow Section 15 to deploy the Fluentd forwarder for per-device correlation. |
+| Resource column empty on webhook rows | Check (a) the LogSource's `resourceMapping` regex extracts a value present on the target device as a custom property; (b) the device is NOT in a non-default Log Partition. Prior sessions' belief that webhook can never bind Resource was incorrect — it binds when both conditions hold. See Section 15 for per-pod binding if you need finer granularity. |
 | Egress blocked (managed platforms) | Whitelist `*.logicmonitor.com:443` in egress firewall rules |
 
-## 15. Advanced: Device-correlated logs via Fluentd forwarder
+## 15. Advanced: Per-pod Resource binding via Fluentd forwarder
 
-The webhook path in Sections 1-14 is the default integration and satisfies most use cases. If you specifically need the **Resource** column in LM Logs populated for per-device log correlation (navigation from an alert to the device view, per-device LMQL filters on `_resource.name`, device-scoped alert rules), deploy the Fluentd forwarder.
+The webhook path in Sections 1-14 already binds the Resource column to the cluster device (see "Resource Column Binding (Webhook Path)" near the top of this guide). That is sufficient for most customers — click-through from an alert log to the cluster device works out of the box with just the webhook LogSource plus the right custom property on the cluster device.
+
+Deploy the Fluentd forwarder in this section only when you need finer-grained binding: each alert bound to the specific **pod device** referenced in the alert's `pod` label, not to the cluster device as a whole. Use cases: per-pod alert dashboards, pod-scoped log retention policies, alert rules keyed on per-pod `_resource.name`, or click-through to the pod view rather than the cluster view.
 
 ### Architecture
 
