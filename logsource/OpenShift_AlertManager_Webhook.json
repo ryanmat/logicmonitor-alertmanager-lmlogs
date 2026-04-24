@@ -11,21 +11,9 @@
   },
   "logFields": [
     {
-      "key": "receiver",
+      "key": "status",
       "method": "RegexGroup",
-      "value": "\"receiver\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": ""
-    },
-    {
-      "key": "component",
-      "method": "RegexGroup",
-      "value": "\"component\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": ""
-    },
-    {
-      "key": "ends_at",
-      "method": "RegexGroup",
-      "value": "\"endsAt\"\\s*:\\s*\"([^\"]+)\"",
+      "value": "\"status\"\\s*:\\s*\"([^\"]+)\"",
       "comment": ""
     },
     {
@@ -35,21 +23,15 @@
       "comment": ""
     },
     {
-      "key": "group_key",
+      "key": "namespace",
       "method": "RegexGroup",
-      "value": "\"groupKey\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "value": "\"namespace\"\\s*:\\s*\"([^\"]+)\"",
       "comment": ""
     },
     {
-      "key": "generator_url",
+      "key": "fingerprint",
       "method": "RegexGroup",
-      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-      "comment": ""
-    },
-    {
-      "key": "truncated_alerts",
-      "method": "RegexGroup",
-      "value": "\"truncatedAlerts\"\\s*:\\s*(\\d+)",
+      "value": "\"fingerprint\"\\s*:\\s*\"([^\"]+)\"",
       "comment": ""
     },
     {
@@ -65,39 +47,9 @@
       "comment": ""
     },
     {
-      "key": "namespace",
+      "key": "generator_url",
       "method": "RegexGroup",
-      "value": "\"namespace\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": ""
-    },
-    {
-      "key": "prometheus",
-      "method": "RegexGroup",
-      "value": "\"prometheus\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": ""
-    },
-    {
-      "key": "alertname",
-      "method": "RegexGroup",
-      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": ""
-    },
-    {
-      "key": "alert_source",
-      "method": "RegexGroup",
-      "value": "\"openshift_io_alert_source\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": ""
-    },
-    {
-      "key": "cluster_id",
-      "method": "RegexGroup",
-      "value": "https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
-      "comment": ""
-    },
-    {
-      "key": "status",
-      "method": "RegexGroup",
-      "value": "\"status\"\\s*:\\s*\"([^\"]+)\"",
+      "value": "\"generatorURL\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
       "comment": ""
     },
     {
@@ -107,15 +59,15 @@
       "comment": ""
     },
     {
-      "key": "cluster_name",
+      "key": "group_key",
       "method": "RegexGroup",
-      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
+      "value": "\"groupKey\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
       "comment": ""
     },
     {
-      "key": "fingerprint",
+      "key": "ends_at",
       "method": "RegexGroup",
-      "value": "\"fingerprint\"\\s*:\\s*\"([^\"]+)\"",
+      "value": "\"endsAt\"\\s*:\\s*\"([^\"]+)\"",
       "comment": ""
     },
     {
@@ -131,9 +83,45 @@
       "comment": ""
     },
     {
+      "key": "alert_source",
+      "method": "RegexGroup",
+      "value": "\"openshift_io_alert_source\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
       "key": "pod",
       "method": "RegexGroup",
       "value": "\"pod\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "cluster_name",
+      "method": "RegexGroup",
+      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "receiver",
+      "method": "RegexGroup",
+      "value": "\"receiver\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "component",
+      "method": "RegexGroup",
+      "value": "\"component\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "alertname",
+      "method": "RegexGroup",
+      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
+    },
+    {
+      "key": "prometheus",
+      "method": "RegexGroup",
+      "value": "\"prometheus\"\\s*:\\s*\"([^\"]+)\"",
       "comment": ""
     },
     {
@@ -143,9 +131,9 @@
       "comment": ""
     },
     {
-      "key": "runbook_url",
+      "key": "cluster_id",
       "method": "RegexGroup",
-      "value": "\"runbook_url\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "value": "https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
       "comment": ""
     },
     {
@@ -153,29 +141,26 @@
       "method": "RegexGroup",
       "value": "\"summary\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
       "comment": ""
+    },
+    {
+      "key": "runbook_url",
+      "method": "RegexGroup",
+      "value": "\"runbook_url\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+      "comment": ""
+    },
+    {
+      "key": "truncated_alerts",
+      "method": "RegexGroup",
+      "value": "\"truncatedAlerts\"\\s*:\\s*(\\d+)",
+      "comment": ""
     }
   ],
   "resourceMapping": [
     {
-      "index": "0",
-      "key": "openshift.instance.name",
+      "key": "openshift.cluster.name",
       "method": "RegexGroup",
-      "value": "\"instance_name\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Instance name attribute"
-    },
-    {
-      "index": "1",
-      "key": "openshift.alert.name",
-      "method": "RegexGroup",
-      "value": "\"alertname\"\\s*:\\s*\"([^\"]+)\"",
-      "comment": "Alert name attribute"
-    },
-    {
-      "index": "2",
-      "key": "a_genURL",
-      "method": "Regex",
-      "value": "^https:\\/\\/[^\\/]*?\\.apps\\.([^.]+)\\.",
-      "comment": "Map to cluster device when cluster_name label present"
+      "value": "\"cluster_name\"\\s*:\\s*\"([^\"]+)\"",
+      "comment": ""
     }
   ],
   "group": "",
